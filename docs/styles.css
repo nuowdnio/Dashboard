@@ -524,19 +524,6 @@ code { background: var(--card-2); border: 1px solid var(--border); border-radius
   .cc-bars { gap: 2px; }
 }
 
-/* ---------- Offline-Hinweis ---------- */
-.offline-banner {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  margin: -24px calc(-1 * clamp(14px, 3vw, 40px)) 14px;
-  padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
-  background: color-mix(in srgb, var(--warn) 22%, var(--card));
-  border-bottom: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border));
-  font-size: 13.5px;
-  text-align: center;
-}
-
 /* ---------- Tab-Leiste (nur Handy) ---------- */
 .tabbar { display: none; }
 
@@ -546,7 +533,6 @@ code { background: var(--card-2); border: 1px solid var(--border); border-radius
     font-size: 15.5px;
     -webkit-tap-highlight-color: transparent;
   }
-  .offline-banner { margin: calc(-14px - env(safe-area-inset-top)) -12px 12px; }
 
   /* Nur die Kacheln des aktiven Tabs zeigen */
   body[data-view='today'] [data-tab]:not([data-tab='today']),
@@ -556,7 +542,7 @@ code { background: var(--card-2); border: 1px solid var(--border); border-radius
 
   .tabbar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     position: fixed;
     left: 0;
     right: 0;
@@ -651,6 +637,10 @@ code { background: var(--card-2); border: 1px solid var(--border); border-radius
   .package-list { grid-template-columns: 1fr; }
   .package { grid-template-columns: minmax(0, 1fr); }
   .package .p-actions { order: 5; margin-top: 4px; }
+  .card-weather .card-actions { display: none; }
 }
 @keyframes sheet-up { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
+
+.row.wrap { flex-wrap: wrap; }
+.file-btn { display: inline-flex; align-items: center; cursor: pointer; }

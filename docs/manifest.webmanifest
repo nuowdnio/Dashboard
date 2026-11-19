@@ -1,7 +1,7 @@
 {
   "name": "Mein Dashboard",
   "short_name": "Dashboard",
-  "description": "Wetter, Mails, Aufgaben, Pakete und Auto-Kosten auf einen Blick",
+  "description": "Wetter, Aufgaben und Auto-Kosten auf einen Blick",
   "lang": "de",
   "start_url": "./",
   "scope": "./",
@@ -17,6 +17,6 @@
   "shortcuts": [
     { "name": "Tanken eintragen", "short_name": "Tanken", "url": "./?action=fuel", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
     { "name": "Neue Aufgabe", "short_name": "Aufgabe", "url": "./?action=task", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Mails", "short_name": "Mails", "url": "./?view=mail", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+    { "name": "Auto-Kosten", "short_name": "Kosten", "url": "./?view=car", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }

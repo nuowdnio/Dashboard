@@ -15,7 +15,6 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body data-view="today">
-    <div id="offline-banner" class="offline-banner" hidden></div>
     <header class="topbar">
       <div>
         <h1 id="greeting">Hallo</h1>
@@ -23,24 +22,12 @@
       </div>
       <div class="topbar-right">
         <div id="clock" class="clock">--:--</div>
-        <button class="icon-btn" data-open="package-dialog" title="Paket erwarten" aria-label="Paket erwarten">📦</button>
         <button class="icon-btn" data-open="settings-dialog" title="Einstellungen" aria-label="Einstellungen">⚙</button>
         <button id="refresh" class="icon-btn" title="Aktualisieren" aria-label="Aktualisieren">⟳</button>
       </div>
     </header>
 
     <section id="summary" class="summary" aria-label="Übersicht" data-tab="today"></section>
-
-    <!-- Pakete: nur sichtbar, wenn eine Sendung erwartet wird -->
-    <article id="packages-card" class="card card-packages" data-tab="today" hidden>
-      <header class="card-head">
-        <h2>📦 Pakete unterwegs</h2>
-        <div class="card-actions">
-          <button class="btn btn-ghost" data-open="package-dialog">+ Paket</button>
-        </div>
-      </header>
-      <ul id="packages" class="card-body package-list"></ul>
-    </article>
 
     <main class="columns">
       <div class="col col-main">
@@ -61,16 +48,6 @@
           <div id="costs" class="card-body"></div>
         </article>
 
-        <!-- Mails -->
-        <article class="card card-mail" data-tab="mail">
-          <header class="card-head">
-            <h2>✉️ Offene Mails <span id="mail-count" class="badge" hidden></span></h2>
-            <div class="card-actions">
-              <a id="mail-open" class="btn btn-ghost" href="https://www.gmx.net/" target="_blank" rel="noopener" hidden>GMX öffnen</a>
-            </div>
-          </header>
-          <ul id="mail" class="card-body mail-list"></ul>
-        </article>
       </div>
 
       <div class="col col-side">
@@ -126,7 +103,6 @@
     <!-- Navigation unten (nur auf dem Handy sichtbar) -->
     <nav class="tabbar" aria-label="Bereiche">
       <button data-view="today" aria-current="page"><span class="ti">🏠</span><span>Heute</span></button>
-      <button data-view="mail"><span class="ti">✉️</span><span>Mails</span><b class="tab-badge" id="tab-badge-mail" hidden></b></button>
       <button data-view="tasks"><span class="ti">✅</span><span>Aufgaben</span><b class="tab-badge" id="tab-badge-tasks" hidden></b></button>
       <button data-view="car"><span class="ti">🚗</span><span>Auto</span></button>
     </nav>
@@ -139,7 +115,7 @@
     <dialog id="car-dialog">
       <form id="car-form" method="dialog" class="dialog-form">
         <h3>Auto-Status bearbeiten</h3>
-        <p class="muted small">Ältere Modelle wie der Ford Focus haben keine Online-Schnittstelle. Die Werte trägst du deshalb hier ein, z. B. nach dem Tanken oder nach der Werkstatt.</p>
+        <p class="muted small">Ältere Modelle wie der Ford Focus haben keine Online-Schnittstelle. Die Werte trägst du deshalb hier ein; der Kilometerstand kommt automatisch aus deinen Tankeinträgen.</p>
         <div class="form-grid">
           <label>Name <input name="name" placeholder="z. B. Mein Focus" /></label>
           <label>Modell <input name="model" placeholder="z. B. Ford Focus 1.6" /></label>
@@ -205,47 +181,6 @@
       </form>
     </dialog>
 
-    <!-- Dialog: Paket -->
-    <dialog id="package-dialog">
-      <form id="package-form" class="dialog-form" autocomplete="off">
-        <h3 id="package-dialog-title">Paket erwarten</h3>
-        <p class="muted small">Die Paket-Kachel erscheint nur, solange eine Sendung unterwegs ist. Nach der Zustellung verschwindet sie wieder. Ist GMX verbunden, werden Pakete aus Versandmails automatisch angelegt.</p>
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label class="span-2">Was kommt? <input name="title" placeholder="z. B. Bremsbeläge, Amazon-Bestellung" maxlength="120" /></label>
-          <label>Sendungsnummer <input name="trackingNumber" placeholder="optional" maxlength="60" /></label>
-          <label>Paketdienst
-            <select name="carrier">
-              <option value="">automatisch erkennen</option>
-              <option value="dhl">DHL / Deutsche Post</option>
-              <option value="hermes">Hermes</option>
-              <option value="dpd">DPD</option>
-              <option value="gls">GLS</option>
-              <option value="ups">UPS</option>
-              <option value="amazon">Amazon</option>
-              <option value="other">Sonstige</option>
-            </select>
-          </label>
-          <label>Erwartet am <input name="expected" type="date" /></label>
-          <label>Status
-            <select name="status">
-              <option value="expected">Angekündigt</option>
-              <option value="transit">Unterwegs</option>
-              <option value="out_for_delivery">In Zustellung</option>
-              <option value="delivered">Zugestellt</option>
-              <option value="problem">Problem</option>
-            </select>
-          </label>
-          <label class="span-2">Eigener Tracking-Link <input name="customUrl" type="url" placeholder="optional, z. B. Link aus der Versandmail" /></label>
-        </div>
-        <p id="package-msg" class="msg" role="status"></p>
-        <div class="dialog-actions">
-          <button class="btn btn-ghost" type="button" data-close>Abbrechen</button>
-          <button class="btn" type="submit">Speichern</button>
-        </div>
-      </form>
-    </dialog>
-
     <!-- Dialog: Einstellungen -->
     <dialog id="settings-dialog">
       <div class="dialog-form">
@@ -280,32 +215,16 @@
           </form>
         </section>
 
-        <section class="stack">
-          <h4>📦 DHL-Sendungsstatus (optional)</h4>
-          <p class="muted small">Ohne Schlüssel gibt es für jedes Paket einen Link zur Sendungsverfolgung. Mit einem kostenlosen DHL-API-Schlüssel aktualisiert das Dashboard den Status von DHL-Paketen automatisch. Den Schlüssel bekommst du auf <em>developer.dhl.com</em> → Konto anlegen → App erstellen → API „Shipment Tracking – Unified“.</p>
-          <p class="small" id="dhl-status"></p>
-          <form id="dhl-form" class="row" autocomplete="off">
-            <input name="apiKey" type="password" placeholder="DHL API Key" />
-            <button class="btn" type="submit">Speichern</button>
-          </form>
-        </section>
+
 
         <section class="stack">
-          <h4>✉️ E-Mail (GMX)</h4>
-          <p class="small" id="mail-status"></p>
-          <form id="mail-form" class="stack-inner" autocomplete="off">
-            <label>E-Mail-Adresse <input name="email" type="email" placeholder="name@gmx.de" /></label>
-            <label>Passwort <input name="password" type="password" placeholder="GMX-Passwort bzw. App-Passwort" autocomplete="new-password" /></label>
-            <details>
-              <summary class="muted small">Anderer Mailserver (optional)</summary>
-              <label>IMAP-Server <input name="host" placeholder="automatisch, z. B. imap.gmx.net" /></label>
-            </details>
-            <p class="muted small">Vorher in GMX einmalig erlauben: <em>E-Mail → Einstellungen → POP3/IMAP Abruf → „E-Mails über externe Programme senden und empfangen“</em>. Bei Zwei-Faktor-Anmeldung ein App-Passwort verwenden. Das Dashboard zeigt ungelesene und markierte Mails und legt aus Versandmails automatisch Pakete an.</p>
-            <div class="row">
-              <button class="btn" type="submit">Verbinden</button>
-              <button class="btn btn-danger" type="button" id="mail-disconnect">Trennen</button>
-            </div>
-          </form>
+          <h4>💾 Daten sichern</h4>
+          <p class="muted small">Deine Einträge (Tanken, Ausgaben, Aufgaben, Auto) werden nur in diesem Browser auf diesem Gerät gespeichert, nicht im Internet. Mach ab und zu eine Sicherung, z. B. nach dem Monatsende. Damit kannst du die Daten auch auf ein anderes Gerät übertragen.</p>
+          <p class="small" id="backup-status"></p>
+          <div class="row wrap">
+            <button class="btn" type="button" id="backup-export">Sicherung herunterladen</button>
+            <label class="btn btn-ghost file-btn">Sicherung laden<input type="file" id="backup-import" accept="application/json,.json" hidden /></label>
+          </div>
         </section>
 
         <p id="settings-msg" class="msg" role="status"></p>

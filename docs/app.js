@@ -1,20 +1,17 @@
-// Persönliches Dashboard – Frontend (ohne Build-Schritt, reines JavaScript).
+// Persönliches Dashboard – läuft komplett im Browser (ohne Server, ohne Build-Schritt).
+import { localApi, expensesCsv, exportBackup, importBackup, backupInfo } from './local-api.js';
 
 const REFRESH_MS = 5 * 60 * 1000;
 const state = {
   car: {},
-  settings: { weather: null, todoist: {}, dhl: {}, mail: {} },
+  settings: { weather: null, todoist: {} },
   expenses: [],
   expenseCategories: {},
-  mail: null,
   tasks: [],
   taskSource: 'local',
   taskError: '',
   weather: null,
-  packages: [],
-  packageErrors: [],
   loadedAt: null,
-  offlineSince: null,
 };
 
 // ---------- Hilfsfunktionen ----------
@@ -22,20 +19,8 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-async function api(path, options = {}) {
-  const res = await fetch(path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body,
-  });
-  if (res.status === 204) return null;
-  // Antwort aus dem Offline-Speicher des Service Workers (Server nicht erreichbar)
-  const cachedAt = res.headers.get('x-cached-at');
-  if (cachedAt) state.offlineSince = Math.min(state.offlineSince || Infinity, Number(cachedAt));
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Fehler ${res.status}`);
-  return data;
-}
+// Alle Daten kommen aus der Datenschicht im Browser (local-api.js).
+const api = (path, options = {}) => localApi(path, options);
 
 function toast(message, isError = false) {
   const el = $('#toast');
@@ -462,118 +447,6 @@ $('#tasks').addEventListener('click', async (e) => {
 
 $('#show-done').addEventListener('change', renderTasks);
 
-// ---------- Pakete ----------
-const PKG_STATUS = {
-  expected: ['Angekündigt', ''],
-  transit: ['Unterwegs', 'accent'],
-  out_for_delivery: ['In Zustellung 🚚', 'warn'],
-  delivered: ['Zugestellt ✓', 'ok'],
-  problem: ['Problem', 'bad'],
-};
-
-function expectedText(p) {
-  const date = p.estimatedDelivery ? p.estimatedDelivery.slice(0, 10) : p.expected;
-  if (!date || p.status === 'delivered') return '';
-  const d = daysUntil(date);
-  if (d < 0) return `<span class="badge bad">sollte seit ${fmtDate(date, { day: '2-digit', month: '2-digit' })} da sein</span>`;
-  return `<span class="badge ${d <= 1 ? 'warn' : ''}">erwartet ${d <= 2 ? relativeDay(date).toLowerCase() : fmtDate(date, { weekday: 'short', day: '2-digit', month: '2-digit' })}</span>`;
-}
-
-function renderPackages() {
-  const card = $('#packages-card');
-  const pkgs = [...state.packages].sort(
-    (a, b) => Number(a.status === 'delivered') - Number(b.status === 'delivered') || (a.expected || '9999').localeCompare(b.expected || '9999'),
-  );
-  card.hidden = pkgs.length === 0;
-  if (!pkgs.length) {
-    $('#packages').innerHTML = '';
-    return;
-  }
-  const errors = state.packageErrors.map((e) => `<li class="error-box">⚠ ${esc(e)}</li>`).join('');
-  $('#packages').innerHTML =
-    errors +
-    pkgs
-      .map((p) => {
-        const [label, cls] = PKG_STATUS[p.status] || PKG_STATUS.expected;
-        const number = p.trackingNumber ? esc(p.trackingNumber) : 'Sendungsverfolgung';
-        const link = p.trackingUrl ? `<a href="${esc(p.trackingUrl)}" target="_blank" rel="noopener">${number} ↗</a>` : p.trackingNumber ? number : '';
-        const detail = [p.statusText, p.location].filter(Boolean).map(esc).join(' · ');
-        return `
-        <li class="package st-${esc(p.status)}" data-id="${esc(p.id)}">
-          <div class="p-title">${esc(p.title)}</div>
-          <div class="p-actions">
-            ${p.status !== 'delivered' ? '<button data-action="received" title="Als erhalten markieren">✓ Erhalten</button>' : ''}
-            <button data-action="edit" title="Bearbeiten">✎</button>
-            <button data-action="delete" title="Entfernen">✕</button>
-          </div>
-          <div class="p-meta">
-            <span class="badge ${cls}">${label}</span>
-            ${expectedText(p)}
-            <span>${esc(p.carrierName)}</span>
-            ${link ? `<span>${link}</span>` : ''}
-          </div>
-          ${detail ? `<div class="p-meta">${detail}${p.statusSource === 'dhl' ? ' (DHL)' : ''}</div>` : ''}
-        </li>`;
-      })
-      .join('');
-}
-
-async function loadPackages(refresh = false) {
-  const data = await api(`/api/packages${refresh ? '?refresh=1' : ''}`);
-  state.packages = data.packages;
-  state.packageErrors = data.errors || [];
-}
-
-function openPackageDialog(pkg) {
-  const form = $('#package-form');
-  form.reset();
-  $('#package-dialog-title').textContent = pkg ? 'Paket bearbeiten' : 'Paket erwarten';
-  if (pkg) for (const el of form.elements) if (el.name && pkg[el.name] != null) el.value = pkg[el.name];
-  form.id.value = pkg?.id || '';
-  setMsg('#package-msg', '');
-  $('#package-dialog').showModal();
-  form.title.focus();
-}
-
-$('#package-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const body = Object.fromEntries(new FormData(form));
-  const id = body.id;
-  delete body.id;
-  try {
-    if (id) await api(`/api/packages/${id}`, { method: 'PATCH', body });
-    else await api('/api/packages', { method: 'POST', body });
-    await loadPackages();
-    $('#package-dialog').close();
-    renderPackages();
-    renderSummary();
-    toast('Paket gespeichert');
-  } catch (err) {
-    setMsg('#package-msg', err.message, 'error');
-  }
-});
-
-$('#packages').addEventListener('click', async (e) => {
-  const li = e.target.closest('.package');
-  const action = e.target.closest('[data-action]')?.dataset.action;
-  if (!li || !action) return;
-  const pkg = state.packages.find((p) => p.id === li.dataset.id);
-  try {
-    if (action === 'edit') return openPackageDialog(pkg);
-    if (action === 'received') await api(`/api/packages/${pkg.id}`, { method: 'PATCH', body: { status: 'delivered' } });
-    if (action === 'delete') {
-      if (!confirm(`„${pkg.title}“ entfernen?`)) return;
-      await api(`/api/packages/${pkg.id}`, { method: 'DELETE' });
-    }
-    await loadPackages();
-    renderPackages();
-    renderSummary();
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
 // ---------- Auto-Kosten ----------
 const CATEGORY_ICONS = {
   fuel: '⛽',
@@ -790,7 +663,7 @@ function renderCosts() {
         </ul>
         <div class="row ex-footer">
           ${expenses.length > 6 ? `<button class="btn btn-ghost" data-action="toggle-all">${showAllExpenses ? 'Weniger anzeigen' : `Alle ${expenses.length} anzeigen`}</button>` : ''}
-          <a class="btn btn-ghost" href="/api/expenses.csv" download>CSV exportieren</a>
+          <button class="btn btn-ghost" data-action="csv">CSV exportieren</button>
         </div>
       </section>
     </div>
@@ -851,6 +724,7 @@ $('#costs').addEventListener('click', async (e) => {
     showAllExpenses = !showAllExpenses;
     return renderCosts();
   }
+  if (action === 'csv') return downloadFile(expensesCsv(), `auto-kosten-${todayKey()}.csv`, 'text/csv;charset=utf-8');
   const li = e.target.closest('li[data-id]');
   const exp = state.expenses.find((x) => x.id === li?.dataset.id);
   if (!exp) return;
@@ -921,90 +795,6 @@ $('#expense-form').addEventListener('submit', async (e) => {
   }
 });
 
-// ---------- Mails ----------
-function fmtMailDate(iso) {
-  const d = new Date(iso);
-  const key = dayKey(d);
-  const diff = daysUntil(key);
-  if (diff === 0) return fmtTime(d);
-  if (diff === -1) return 'gestern';
-  if (diff > -7) return d.toLocaleDateString('de-DE', { weekday: 'short' });
-  return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
-}
-
-function renderMail() {
-  const m = state.mail;
-  const list = $('#mail');
-  const count = $('#mail-count');
-  $('#mail-open').hidden = !m?.webmailUrl;
-  if (m?.webmailUrl) $('#mail-open').href = m.webmailUrl;
-  count.hidden = !m?.messages?.length;
-  if (m?.messages) count.textContent = `${m.unreadCount} ungelesen${m.flaggedCount ? ` · ${m.flaggedCount} markiert` : ''}`;
-
-  if (!m || !m.configured) {
-    list.innerHTML = `<li class="empty">Noch kein Postfach verbunden.<br/><button class="btn" data-open="settings-dialog" data-focus="mail-email">GMX verbinden</button></li>`;
-    return;
-  }
-  if (m.error) {
-    list.innerHTML = `<li class="error-box">⚠ ${esc(m.error)}</li>`;
-    return;
-  }
-  if (!m.messages.length) {
-    list.innerHTML = '<li class="empty">Posteingang erledigt 🎉 Keine ungelesenen oder markierten Mails.</li>';
-    return;
-  }
-  list.innerHTML = m.messages
-    .map(
-      (x) => `
-      <li class="mail ${x.unread ? 'unread' : ''}" data-uid="${x.uid}">
-        <span class="mail-dot" title="${x.unread ? 'ungelesen' : ''}"></span>
-        <div class="mail-main">
-          <div class="mail-from">${esc(x.from)} ${x.flagged ? '<span title="Markiert" aria-label="markiert">⭐</span>' : ''}</div>
-          <div class="mail-subject">${esc(x.subject)}</div>
-        </div>
-        <div class="mail-side">
-          <span class="muted small">${fmtMailDate(x.date)}</span>
-          <span class="mail-actions">
-            ${x.unread ? '<button data-action="seen" title="Als gelesen markieren">✓ Gelesen</button>' : ''}
-            ${x.flagged ? '<button data-action="unflag" title="Markierung entfernen">Erledigt</button>' : ''}
-          </span>
-        </div>
-      </li>`,
-    )
-    .join('');
-}
-
-async function loadMail(refresh = false) {
-  state.mail = await api(`/api/mail${refresh ? '?refresh=1' : ''}`);
-}
-
-$('#mail').addEventListener('click', async (e) => {
-  const action = e.target.closest('[data-action]')?.dataset.action;
-  const li = e.target.closest('li[data-uid]');
-  if (!action || !li) return;
-  const uid = Number(li.dataset.uid);
-  const body = action === 'seen' ? { seen: true } : { flagged: false };
-  try {
-    e.target.disabled = true;
-    await api(`/api/mail/${uid}`, { method: 'PATCH', body });
-    const msg = state.mail.messages.find((x) => x.uid === uid);
-    if (action === 'seen') {
-      msg.unread = false;
-      state.mail.unreadCount = Math.max(0, state.mail.unreadCount - 1);
-    } else {
-      msg.flagged = false;
-      state.mail.flaggedCount = Math.max(0, state.mail.flaggedCount - 1);
-    }
-    // Erledigte Mails (gelesen und nicht markiert) verschwinden aus der Liste.
-    state.mail.messages = state.mail.messages.filter((x) => x.unread || x.flagged);
-    renderMail();
-    renderSummary();
-  } catch (err) {
-    e.target.disabled = false;
-    toast(err.message, true);
-  }
-});
-
 // ---------- Einstellungen ----------
 function renderSettings() {
   const s = state.settings;
@@ -1014,12 +804,10 @@ function renderSettings() {
     : '<span class="badge">nicht verbunden</span> <span class="muted">Ohne Todoist werden die Aufgaben lokal im Dashboard gespeichert.</span>';
   $('#todoist-form').filter.value = s.todoist.filter || '';
   $('#todoist-disconnect').hidden = !s.todoist.connected || s.todoist.fromEnv;
-  $('#dhl-status').innerHTML = s.dhl.configured ? '<span class="badge ok">Schlüssel hinterlegt</span>' : '<span class="badge">kein Schlüssel</span>';
-  $('#mail-status').innerHTML = s.mail.configured
-    ? `<span class="badge ok">verbunden</span> <span class="muted">${esc(s.mail.email)} · ${esc(s.mail.host)}${s.mail.fromEnv ? ' (über Umgebungsvariablen)' : ''}</span>`
-    : '<span class="badge">nicht verbunden</span>';
-  $('#mail-form').email.value = s.mail.email || '';
-  $('#mail-disconnect').hidden = !s.mail.configured || s.mail.fromEnv;
+  const info = backupInfo();
+  $('#backup-status').textContent = info.lastBackupAt
+    ? `Letzte Sicherung: ${new Date(info.lastBackupAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}`
+    : 'Noch keine Sicherung erstellt.';
 }
 
 async function afterSettingsChange(settings, message) {
@@ -1099,34 +887,35 @@ $('#todoist-disconnect').addEventListener('click', async () => {
   await afterSettingsChange(settings, 'Todoist getrennt.');
 });
 
-$('#dhl-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
+// ---------- Sicherung ----------
+function downloadFile(text, filename, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+$('#backup-export').addEventListener('click', () => {
+  downloadFile(exportBackup(), `dashboard-sicherung-${todayKey()}.json`, 'application/json');
+  renderSettings();
+  setMsg('#settings-msg', 'Sicherung gespeichert (Ordner „Downloads“).', 'ok');
+});
+
+$('#backup-import').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!confirm('Sicherung laden? Die aktuellen Daten auf diesem Gerät werden ersetzt.')) return;
   try {
-    const settings = await api('/api/settings/dhl', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
-    e.target.apiKey.value = '';
-    await afterSettingsChange(settings, settings.dhl.configured ? 'DHL-Schlüssel gespeichert.' : 'DHL-Schlüssel entfernt.');
+    const r = importBackup(await file.text());
+    setMsg('#settings-msg', `Sicherung geladen: ${r.expenses} Ausgaben, ${r.tasks} Aufgaben.`, 'ok');
+    await loadAll();
+    renderSettings();
   } catch (err) {
     setMsg('#settings-msg', err.message, 'error');
   }
-});
-
-$('#mail-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const body = Object.fromEntries(new FormData(e.target));
-  setMsg('#settings-msg', 'Melde mich beim Postfach an …');
-  try {
-    const settings = await api('/api/settings/mail', { method: 'PUT', body });
-    e.target.password.value = '';
-    await afterSettingsChange(settings, 'Postfach verbunden ✓');
-  } catch (err) {
-    setMsg('#settings-msg', err.message, 'error');
-  }
-});
-
-$('#mail-disconnect').addEventListener('click', async () => {
-  if (!confirm('Postfach trennen? Zugangsdaten werden gelöscht.')) return;
-  const settings = await api('/api/settings/mail', { method: 'DELETE' });
-  await afterSettingsChange(settings, 'Postfach getrennt.');
 });
 
 // ---------- Übersicht ----------
@@ -1146,15 +935,6 @@ function renderSummary() {
       hint: rainHint(w).wet ? rainHint(w).text : `${wxText(w.current.code)}, ${deg(w.daily[0].min)} / ${deg(w.daily[0].max)}`,
     });
   }
-  const m = state.mail;
-  if (m?.configured) {
-    stats.push({
-      label: 'Mails', view: 'mail',
-      value: m.error ? '–' : `✉️ ${m.unreadCount}`,
-      hint: m.error ? 'Postfach nicht erreichbar' : `ungelesen${m.flaggedCount ? ` · ${m.flaggedCount} markiert` : ''}`,
-      cls: m.error ? 'bad' : '',
-    });
-  }
   stats.push({
     label: isTodoist() ? 'Todoist' : 'Offene Aufgaben', view: 'tasks',
     value: open.length,
@@ -1167,16 +947,6 @@ function renderSummary() {
           : 'Nichts überfällig',
     cls: overdue.length || state.taskError ? 'bad' : dueToday.length ? 'warn' : '',
   });
-  const activePkgs = state.packages.filter((p) => p.status !== 'delivered');
-  if (activePkgs.length) {
-    const soon = activePkgs.filter((p) => p.status === 'out_for_delivery' || p.expected === today);
-    stats.push({
-      label: 'Pakete', view: 'today',
-      value: `📦 ${activePkgs.length}`,
-      hint: soon.length ? `${soon.length} kommt heute` : activePkgs.map((p) => p.title).join(', '),
-      cls: soon.length ? 'warn' : '',
-    });
-  }
   stats.push({
     label: 'Auto', view: 'car',
     value: warnings.length ? `${warnings.length} Hinweis${warnings.length === 1 ? '' : 'e'}` : state.car?.updatedAt ? 'Alles ok' : '–',
@@ -1199,7 +969,6 @@ function renderSummary() {
     });
   }
 
-  setBadge('#tab-badge-mail', m?.configured && !m.error ? m.unreadCount : 0);
   setBadge('#tab-badge-tasks', overdue.length + dueToday.length);
 
   $('#summary').innerHTML = stats
@@ -1222,7 +991,6 @@ document.addEventListener('click', (e) => {
     // Ein offener Dialog wird geschlossen, bevor der nächste aufgeht.
     document.querySelectorAll('dialog[open]').forEach((d) => d.close());
     if (id === 'car-dialog') openCarDialog();
-    else if (id === 'package-dialog') openPackageDialog(null);
     else if (id === 'expense-dialog') openExpenseDialog(null, opener.dataset.category || 'fuel');
     else {
       if (id === 'settings-dialog') {
@@ -1237,7 +1005,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- Handy: Tabs ----------
-const VIEWS = ['today', 'mail', 'tasks', 'car'];
+const VIEWS = ['today', 'tasks', 'car'];
 
 function setBadge(sel, n) {
   const el = $(sel);
@@ -1267,28 +1035,15 @@ $('#summary').addEventListener('click', (e) => {
   if (stat?.dataset.goto && matchMedia('(max-width: 760px)').matches) setView(stat.dataset.goto);
 });
 
-function renderOffline() {
-  const el = $('#offline-banner');
-  if (!state.offlineSince) {
-    el.hidden = true;
-    return;
-  }
-  const t = new Date(state.offlineSince);
-  const when = dayKey(t) === todayKey() ? `${fmtTime(t)} Uhr` : t.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
-  el.innerHTML = `⚠ Server nicht erreichbar. Du siehst den Stand von ${esc(when)}. <span class="muted">Auf dem Handy: Dashboard in Termux starten.</span>`;
-  el.hidden = false;
-}
-
 // ---------- Laden ----------
 async function loadAll(refresh = false) {
   const btn = $('#refresh');
   btn.classList.add('spin');
-  state.offlineSince = null;
   try {
     const s = await api('/api/state');
     Object.assign(state, s);
     // Unabhängige Quellen parallel laden; ein Fehler in einer Quelle blockiert die anderen nicht.
-    const results = await Promise.allSettled([loadTasks(refresh), loadWeather(refresh), loadPackages(refresh), loadExpenses(), loadMail(refresh)]);
+    const results = await Promise.allSettled([loadTasks(refresh), loadWeather(refresh), loadExpenses()]);
     const failed = results.find((r) => r.status === 'rejected');
     if (failed) toast(`Teilweise nicht geladen: ${failed.reason.message}`, true);
     state.loadedAt = new Date();
@@ -1302,12 +1057,9 @@ async function loadAll(refresh = false) {
 }
 
 function renderAll() {
-  renderOffline();
   renderSummary();
-  renderPackages();
   renderWeather();
   renderCosts();
-  renderMail();
   renderTasks();
   renderCar();
 }
@@ -1321,7 +1073,7 @@ const startAction = params.get('action');
 if (params.size) history.replaceState(null, '', location.pathname);
 
 // Offline-Fähigkeit und Installation als App
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
@@ -1337,7 +1089,6 @@ document.addEventListener('visibilitychange', () => {
 
 loadAll().then(() => {
   if (startAction === 'fuel') openExpenseDialog(null, 'fuel');
-  else if (startAction === 'package') openPackageDialog(null);
   else if (startAction === 'task') {
     setView('tasks');
     $('#task-form').title.focus();
