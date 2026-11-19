@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f1115" />
+    <title>Mein Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234f8cff'/><rect x='18' y='18' width='28' height='28' rx='6' fill='white'/><rect x='54' y='18' width='28' height='28' rx='6' fill='white' opacity='.7'/><rect x='18' y='54' width='64' height='28' rx='6' fill='white' opacity='.85'/></svg>" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1 id="greeting">Hallo</h1>
+        <p id="today" class="muted"></p>
+      </div>
+      <div class="topbar-right">
+        <div id="clock" class="clock">--:--</div>
+        <button id="refresh" class="icon-btn" title="Aktualisieren" aria-label="Aktualisieren">⟳</button>
+      </div>
+    </header>
+
+    <section id="summary" class="summary" aria-label="Übersicht"></section>
+
+    <main class="grid">
+      <!-- Termine -->
+      <article class="card card-events">
+        <header class="card-head">
+          <h2>📅 Anstehende Termine</h2>
+          <div class="card-actions">
+            <select id="event-range" aria-label="Zeitraum">
+              <option value="7">7 Tage</option>
+              <option value="14" selected>14 Tage</option>
+              <option value="30">30 Tage</option>
+            </select>
+            <button class="btn btn-ghost" data-open="calendar-dialog">Kalender verwalten</button>
+          </div>
+        </header>
+        <div id="events" class="card-body"></div>
+      </article>
+
+      <!-- Aufgaben -->
+      <article class="card card-tasks">
+        <header class="card-head">
+          <h2>✅ Aufgaben</h2>
+          <div class="card-actions">
+            <label class="toggle"><input type="checkbox" id="show-done" /> Erledigte zeigen</label>
+          </div>
+        </header>
+        <form id="task-form" class="task-form" autocomplete="off">
+          <input name="title" placeholder="Neue Aufgabe …" required maxlength="300" />
+          <input name="due" type="date" aria-label="Fällig am" />
+          <select name="priority" aria-label="Priorität">
+            <option value="normal">Normal</option>
+            <option value="high">Hoch</option>
+            <option value="low">Niedrig</option>
+          </select>
+          <button class="btn" type="submit">Hinzufügen</button>
+        </form>
+        <ul id="tasks" class="card-body task-list"></ul>
+      </article>
+
+      <!-- Auto -->
+      <article class="card card-car">
+        <header class="card-head">
+          <h2>🚗 Mein Auto</h2>
+          <div class="card-actions">
+            <button class="btn btn-ghost" data-open="car-dialog">Bearbeiten</button>
+          </div>
+        </header>
+        <div id="car" class="card-body"></div>
+      </article>
+    </main>
+
+    <footer class="footer muted">
+      <span id="last-update"></span>
+    </footer>
+
+    <!-- Dialog: Auto bearbeiten -->
+    <dialog id="car-dialog">
+      <form id="car-form" method="dialog" class="dialog-form">
+        <h3>Auto-Status bearbeiten</h3>
+        <p class="muted small">Vorerst manuelle Eingabe. Eine automatische Anbindung (Hersteller-App/API) kann später ergänzt werden.</p>
+        <div class="form-grid">
+          <label>Name <input name="name" placeholder="z. B. Familienauto" /></label>
+          <label>Modell <input name="model" placeholder="z. B. VW Golf 8" /></label>
+          <label>Kennzeichen <input name="licensePlate" placeholder="M-AB 1234" /></label>
+          <label>Kilometerstand <input name="mileageKm" type="number" min="0" inputmode="numeric" /></label>
+          <label>Tank / Akku (%) <input name="fuelPercent" type="number" min="0" max="100" /></label>
+          <label>Reichweite (km) <input name="rangeKm" type="number" min="0" /></label>
+          <label>Nächste HU / TÜV <input name="nextInspection" type="date" /></label>
+          <label>Nächste Inspektion <input name="nextService" type="date" /></label>
+          <label>… oder bei km <input name="nextServiceKm" type="number" min="0" /></label>
+          <label>Reifenwechsel <input name="tireChange" type="date" /></label>
+          <label>Verriegelt
+            <select name="locked">
+              <option value="">unbekannt</option>
+              <option value="true">ja</option>
+              <option value="false">nein</option>
+            </select>
+          </label>
+          <label>Standort <input name="location" placeholder="z. B. Tiefgarage" /></label>
+          <label class="span-2">Notizen <textarea name="notes" rows="2"></textarea></label>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn btn-ghost" value="cancel" formnovalidate>Abbrechen</button>
+          <button class="btn" value="save">Speichern</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Dialog: Kalender verwalten -->
+    <dialog id="calendar-dialog">
+      <div class="dialog-form">
+        <h3>Kalender verwalten</h3>
+        <ul id="calendar-list" class="calendar-list"></ul>
+
+        <details class="help" open>
+          <summary>So verbindest du deinen Samsung Kalender</summary>
+          <p>Samsung Kalender selbst bietet keine Schnittstelle an. Er zeigt aber die Kalender der Konten an, die auf deinem Handy eingerichtet sind. Meistens ist das ein Google-Konto. Diese Konten liefern einen privaten iCal-Link:</p>
+          <ol>
+            <li><strong>Prüfen, wo die Termine liegen:</strong> Samsung Kalender → ☰ Menü → Kalender verwalten. Dort steht pro Kalender das Konto (z. B. „Google“ oder „Mein Handy/Samsung-Konto“).</li>
+            <li><strong>Termine im Google-Konto:</strong> Am PC <em>calendar.google.com</em> öffnen → Einstellungen ⚙ → links den Kalender wählen → „Kalender integrieren“ → <em>„Privatadresse im iCal-Format“</em> kopieren und unten einfügen.</li>
+            <li><strong>Termine nur auf dem Handy / im Samsung-Konto:</strong> In Samsung Kalender kannst du Termine in dein Google-Konto verschieben (Kalender verwalten → Termine verschieben). Danach geht es wie in Schritt 2. Alternativ: Termine als <em>.ics</em> exportieren und unten hochladen (aktualisiert sich dann aber nicht automatisch).</li>
+            <li><strong>Outlook / iCloud</strong> funktionieren genauso über deren „Kalender veröffentlichen/freigeben“-Link (ICS).</li>
+          </ol>
+          <p class="muted small">Der Link ist geheim. Er wird nur auf diesem Server gespeichert und nicht an den Browser zurückgegeben.</p>
+        </details>
+
+        <form id="calendar-url-form" class="stack" autocomplete="off">
+          <h4>iCal-Link hinzufügen (empfohlen, aktualisiert sich automatisch)</h4>
+          <div class="row">
+            <input name="name" placeholder="Name, z. B. Privat" required maxlength="100" />
+            <input name="color" type="color" value="#4f8cff" aria-label="Farbe" />
+          </div>
+          <input name="url" type="url" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" required />
+          <button class="btn" type="submit">Link hinzufügen</button>
+        </form>
+
+        <form id="calendar-file-form" class="stack" autocomplete="off">
+          <h4>… oder .ics-Datei hochladen</h4>
+          <div class="row">
+            <input name="name" placeholder="Name, z. B. Samsung Export" required maxlength="100" />
+            <input name="color" type="color" value="#22c55e" aria-label="Farbe" />
+          </div>
+          <input name="file" type="file" accept=".ics,text/calendar" required />
+          <button class="btn" type="submit">Datei hochladen</button>
+        </form>
+
+        <p id="calendar-msg" class="msg" role="status"></p>
+        <div class="dialog-actions">
+          <button class="btn btn-ghost" data-close>Schließen</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
