@@ -31,6 +31,17 @@
 
     <main class="columns">
       <div class="col col-main">
+        <!-- Morgenbriefing -->
+        <article class="card card-briefing" data-tab="today">
+          <header class="card-head">
+            <h2 id="briefing-title">📰 Morgenbriefing</h2>
+            <div class="card-actions">
+              <a id="briefing-open" class="btn btn-ghost" href="https://nuowdnio.github.io/morgenbriefing/" target="_blank" rel="noopener">Ganzes Briefing</a>
+            </div>
+          </header>
+          <div id="briefing" class="card-body"></div>
+        </article>
+
         <!-- Auto-Kosten -->
         <article class="card card-costs" data-tab="car">
           <header class="card-head">
@@ -62,6 +73,21 @@
           <div id="weather" class="card-body"></div>
         </article>
 
+        <!-- Spritpreise -->
+        <article class="card card-fuel" data-tab="car">
+          <header class="card-head">
+            <h2 id="fuel-title">⛽ Spritpreise</h2>
+            <div class="card-actions">
+              <select id="fuel-type" aria-label="Sorte">
+                <option value="e10">Super E10</option>
+                <option value="e5">Super E5</option>
+                <option value="diesel">Diesel</option>
+              </select>
+            </div>
+          </header>
+          <div id="fuel" class="card-body"></div>
+        </article>
+
         <!-- Aufgaben -->
         <article class="card card-tasks" data-tab="tasks">
           <header class="card-head">
@@ -87,6 +113,22 @@
           <ul id="tasks" class="card-body task-list"></ul>
         </article>
 
+        <!-- Notizen -->
+        <article class="card card-notes" data-tab="tasks">
+          <header class="card-head">
+            <h2>🗒 Notizen</h2>
+          </header>
+          <form id="note-form" class="note-form" autocomplete="off">
+            <textarea name="text" rows="2" placeholder="Kurze Notiz …" maxlength="2000" required></textarea>
+            <input type="hidden" name="id" />
+            <div class="row">
+              <button class="btn" type="submit">Speichern</button>
+              <button class="btn btn-ghost" type="button" id="note-cancel" hidden>Abbrechen</button>
+            </div>
+          </form>
+          <ul id="notes" class="card-body note-list"></ul>
+        </article>
+
         <!-- Auto -->
         <article class="card card-car" data-tab="car">
           <header class="card-head">
@@ -103,7 +145,7 @@
     <!-- Navigation unten (nur auf dem Handy sichtbar) -->
     <nav class="tabbar" aria-label="Bereiche">
       <button data-view="today" aria-current="page"><span class="ti">🏠</span><span>Heute</span></button>
-      <button data-view="tasks"><span class="ti">✅</span><span>Aufgaben</span><b class="tab-badge" id="tab-badge-tasks" hidden></b></button>
+      <button data-view="tasks"><span class="ti">✅</span><span>To-dos</span><b class="tab-badge" id="tab-badge-tasks" hidden></b></button>
       <button data-view="car"><span class="ti">🚗</span><span>Auto</span></button>
     </nav>
 
@@ -135,7 +177,11 @@
             </select>
           </label>
           <label>Standort <input name="location" placeholder="z. B. Tiefgarage" /></label>
-          <label class="span-2">Notizen <textarea name="notes" rows="2" placeholder="z. B. Ölwechsel fällig bei 152.000 km"></textarea></label>
+          <label>Letzter Ölwechsel (km) <input name="oilLastKm" type="number" min="0" inputmode="numeric" /></label>
+          <label>Letzter Ölwechsel am <input name="oilLastDate" type="date" /></label>
+          <label>Ölwechsel alle … km <input name="oilIntervalKm" type="number" min="1000" step="500" placeholder="15000" /></label>
+          <label>… oder alle … Monate <input name="oilIntervalMonths" type="number" min="1" max="48" placeholder="12" /></label>
+          <label class="span-2">Notizen <textarea name="notes" rows="2" placeholder="z. B. Öl: 5W-20 Ford-Norm"></textarea></label>
         </div>
         <div class="dialog-actions">
           <button class="btn btn-ghost" value="cancel" formnovalidate>Abbrechen</button>
@@ -153,6 +199,7 @@
           <label>Art
             <select name="category">
               <option value="fuel">⛽ Tanken</option>
+              <option value="oil">🛢 Ölwechsel</option>
               <option value="service">🔧 Inspektion / Wartung</option>
               <option value="repair">🛠 Reparatur</option>
               <option value="tires">🛞 Reifen</option>
@@ -218,8 +265,38 @@
 
 
         <section class="stack">
+          <h4>⛽ Spritpreise (Tankerkönig)</h4>
+          <p class="small" id="fuel-status"></p>
+          <form id="fuel-form" class="stack-inner" autocomplete="off">
+            <label>API-Schlüssel <input id="fuel-key" name="apiKey" type="password" placeholder="00000000-0000-0000-0000-000000000000" /></label>
+            <div class="row wrap">
+              <label>Sorte
+                <select name="type"><option value="e10">Super E10</option><option value="e5">Super E5</option><option value="diesel">Diesel</option></select>
+              </label>
+              <label>Umkreis
+                <select name="radius"><option value="2">2 km</option><option value="5">5 km</option><option value="10">10 km</option><option value="15">15 km</option></select>
+              </label>
+            </div>
+            <p class="muted small">Den kostenlosen Schlüssel bekommst du auf <em>onboarding.tankerkoenig.de</em> (Name und E-Mail angeben). Gesucht wird rund um deinen Wetter-Ort.</p>
+            <div class="row">
+              <button class="btn" type="submit">Speichern</button>
+              <button class="btn btn-danger" type="button" id="fuel-remove">Schlüssel entfernen</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="stack">
+          <h4>📰 Morgenbriefing</h4>
+          <form id="briefing-form" class="stack-inner" autocomplete="off">
+            <label>Adresse deines Briefings <input name="url" type="url" placeholder="https://…github.io/morgenbriefing/" /></label>
+            <p class="muted small">Gezeigt werden die Top-Meldungen. Themen, die du auf der Briefing-Seite ausgeschaltet hast, bleiben auch hier aus.</p>
+            <div class="row"><button class="btn" type="submit">Speichern</button></div>
+          </form>
+        </section>
+
+        <section class="stack">
           <h4>💾 Daten sichern</h4>
-          <p class="muted small">Deine Einträge (Tanken, Ausgaben, Aufgaben, Auto) werden nur in diesem Browser auf diesem Gerät gespeichert, nicht im Internet. Mach ab und zu eine Sicherung, z. B. nach dem Monatsende. Damit kannst du die Daten auch auf ein anderes Gerät übertragen.</p>
+          <p class="muted small">Deine Einträge (Tanken, Ausgaben, Aufgaben, Notizen, Auto) werden nur in diesem Browser auf diesem Gerät gespeichert, nicht im Internet. Mach ab und zu eine Sicherung, z. B. nach dem Monatsende. Damit kannst du die Daten auch auf ein anderes Gerät übertragen.</p>
           <p class="small" id="backup-status"></p>
           <div class="row wrap">
             <button class="btn" type="button" id="backup-export">Sicherung herunterladen</button>

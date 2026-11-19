@@ -4,9 +4,13 @@ import { localApi, expensesCsv, exportBackup, importBackup, backupInfo } from '.
 const REFRESH_MS = 5 * 60 * 1000;
 const state = {
   car: {},
-  settings: { weather: null, todoist: {} },
+  settings: { weather: null, todoist: {}, fuel: {}, briefing: {} },
   expenses: [],
   expenseCategories: {},
+  alerts: null,
+  fuel: null,
+  briefing: null,
+  notes: [],
   tasks: [],
   taskSource: 'local',
   taskError: '',
@@ -166,11 +170,13 @@ function renderWeather() {
   const c = w.current;
   const today = w.daily[0];
   const hint = rainHint(w);
+  const frost = frostInfo(w);
   const allMin = Math.min(...w.daily.map((d) => d.min));
   const allMax = Math.max(...w.daily.map((d) => d.max));
   const span = Math.max(1, allMax - allMin);
 
   el.innerHTML = `
+    ${renderAlerts()}
     <div class="wx-now">
       <div class="wx-icon">${wxIcon(c.code, c.isDay)}</div>
       <div>
@@ -184,6 +190,7 @@ function renderWeather() {
         }</div>
       </div>
     </div>
+    ${frost ? `<div class="wx-alert frost ${frost.level}">❄️ ${esc(frost.text)}</div>` : ''}
     <div class="wx-alert ${hint.wet ? '' : 'dry'}">${esc(hint.text)}</div>
     <div class="wx-hours">
       ${w.hourly
@@ -236,6 +243,8 @@ function carWarnings(car) {
     list.push({ label: 'Inspektion (km)', d: null, level: car.nextServiceKm <= car.mileageKm ? 'bad' : 'warn' });
   }
   if (car.fuelPercent != null && car.fuelPercent < 20) list.push({ label: 'Tank fast leer', d: null, level: 'bad' });
+  const oil = oilStatus(car);
+  if (oil?.level) list.push({ label: 'Ölwechsel', d: null, level: oil.level });
   return list.sort((a, b) => (a.level === b.level ? 0 : a.level === 'bad' ? -1 : 1));
 }
 
@@ -280,6 +289,7 @@ function renderCar() {
       <dt>Inspektion</dt><dd>${car.nextService ? fmtDate(car.nextService) : ''} ${dueBadge(car.nextService)}
         ${kmLeft != null ? `<span class="badge ${kmLeft <= 0 ? 'bad' : kmLeft <= 1000 ? 'warn' : ''}">${kmLeft <= 0 ? 'km überschritten' : `noch ${fmtNum(kmLeft)} km`}</span>` : ''}
         ${!car.nextService && kmLeft == null ? '–' : ''}</dd>
+      ${renderOilRow(car)}
       <dt>Reifenwechsel</dt><dd>${fmtDate(car.tireChange)} ${dueBadge(car.tireChange)}</dd>
       ${lockBadge ? `<dt>Verriegelung</dt><dd>${lockBadge}</dd>` : ''}
       ${car.location ? `<dt>Standort</dt><dd>${esc(car.location)}</dd>` : ''}
@@ -447,9 +457,434 @@ $('#tasks').addEventListener('click', async (e) => {
 
 $('#show-done').addEventListener('change', renderTasks);
 
+// ---------- Frost & Glätte ----------
+/** Prüft die Stunden bis morgen früh 9 Uhr auf Frost und Glätte. */
+function frostInfo(w) {
+  if (!w?.hourly?.length) return null;
+  const now = new Date();
+  const until = new Date(now);
+  if (now.getHours() >= 9) until.setDate(until.getDate() + 1);
+  until.setHours(9, 0, 0, 0);
+  const hours = w.hourly.filter((h) => new Date(h.time) <= until);
+  if (!hours.length) return null;
+  const coldest = hours.reduce((a, b) => (b.temperature < a.temperature ? b : a));
+  const icy = hours.find((h) => h.temperature <= 1 && (h.precipitation > 0 || (h.precipitationProbability ?? 0) >= 50));
+  const when = (h) => {
+    const d = new Date(h.time);
+    const day = dayKey(d) === todayKey() ? '' : 'morgen ';
+    return `${day}${pad(d.getHours())} Uhr`;
+  };
+  const morning = now.getHours() >= 5 && now.getHours() < 10;
+  if (morning && w.current.temperature <= 0) {
+    return { level: 'bad', short: `Frost: jetzt ${deg(w.current.temperature)}`, text: `Jetzt ${deg(w.current.temperature)}: Die Scheibe ist vermutlich gefroren. Kratzer bereitlegen und ein paar Minuten früher los.` };
+  }
+  if (icy) {
+    return { level: 'bad', short: `Glättegefahr ab ${when(icy)}`, text: `Glättegefahr ab ca. ${when(icy)}: Niederschlag bei ${deg(icy.temperature)}. Vorsichtig fahren und mehr Zeit einplanen.` };
+  }
+  if (coldest.temperature <= 0) {
+    return { level: 'warn', short: `Frost bis ${deg(coldest.temperature)}`, text: `Frost bis ${deg(coldest.temperature)} (gegen ${when(coldest)}): Morgens Scheibe freikratzen, 5 Minuten früher los.` };
+  }
+  if (coldest.temperature <= 2) {
+    return { level: 'warn', short: `Reif möglich (${deg(coldest.temperature)})`, text: `Tiefstwert ${deg(coldest.temperature)} gegen ${when(coldest)}: Reif auf der Scheibe ist möglich.` };
+  }
+  return null;
+}
+
+// ---------- Unwetterwarnungen (DWD) ----------
+const SEVERITY = {
+  minor: { label: 'Wetterwarnung', cls: 'sev-minor' },
+  moderate: { label: 'Markante Wetterwarnung', cls: 'sev-moderate' },
+  severe: { label: 'Unwetterwarnung', cls: 'sev-severe' },
+  extreme: { label: 'Extremes Unwetter', cls: 'sev-extreme' },
+};
+
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const diff = daysUntil(dayKey(d));
+  const day = diff === 0 ? 'heute' : diff === 1 ? 'morgen' : d.toLocaleDateString('de-DE', { weekday: 'short' });
+  return `${day} ${fmtTime(d)}`;
+}
+
+function renderAlerts() {
+  const a = state.alerts;
+  if (!a?.alerts?.length) return '';
+  return `<div class="alerts">${a.alerts
+    .map((x) => {
+      const sev = SEVERITY[x.severity] || SEVERITY.minor;
+      const time = [x.onset && new Date(x.onset) > new Date() ? `ab ${fmtWhen(x.onset)}` : '', x.expires ? `bis ${fmtWhen(x.expires)}` : ''].filter(Boolean).join(' ');
+      return `
+        <details class="alert ${sev.cls}">
+          <summary>
+            <span class="alert-icon" aria-hidden="true">⚠</span>
+            <span><strong>${esc(sev.label)}: ${esc(x.event)}</strong><br/><span class="small">${esc(time)}</span></span>
+          </summary>
+          ${x.headline ? `<p><strong>${esc(x.headline)}</strong></p>` : ''}
+          ${x.description ? `<p>${esc(x.description)}</p>` : ''}
+          ${x.instruction ? `<p class="muted">${esc(x.instruction)}</p>` : ''}
+          <p class="muted small">Quelle: Deutscher Wetterdienst</p>
+        </details>`;
+    })
+    .join('')}</div>`;
+}
+
+async function loadAlerts(refresh = false) {
+  state.alerts = await api(`/api/alerts${refresh ? '?refresh=1' : ''}`);
+}
+
+// ---------- Ölwechsel ----------
+function oilStatus(car) {
+  if (car.oilLastKm == null && !car.oilLastDate) return null;
+  const intervalKm = car.oilIntervalKm || 15000;
+  const months = car.oilIntervalMonths || 12;
+  let kmLeft = null;
+  let kmPct = 0;
+  if (car.oilLastKm != null && car.mileageKm != null) {
+    const used = Math.max(0, car.mileageKm - car.oilLastKm);
+    kmLeft = intervalKm - used;
+    kmPct = used / intervalKm;
+  }
+  let dueDate = '';
+  let daysLeft = null;
+  let timePct = 0;
+  if (car.oilLastDate) {
+    const last = parseDay(car.oilLastDate);
+    const due = new Date(last.getFullYear(), last.getMonth() + months, last.getDate());
+    dueDate = dayKey(due);
+    daysLeft = daysUntil(dueDate);
+    timePct = (Date.now() - last.getTime()) / (due.getTime() - last.getTime());
+  }
+  const pct = Math.max(0, Math.min(1, Math.max(kmPct, timePct)));
+  const level = (kmLeft != null && kmLeft <= 0) || (daysLeft != null && daysLeft <= 0) ? 'bad' : (kmLeft != null && kmLeft <= 1000) || (daysLeft != null && daysLeft <= 30) ? 'warn' : '';
+  return { kmLeft, dueDate, daysLeft, pct, level };
+}
+
+function renderOilRow(car) {
+  const o = oilStatus(car);
+  if (!o) {
+    return `<dt>Ölwechsel</dt><dd><button class="linkish" data-open="car-dialog">eintragen</button></dd>`;
+  }
+  const parts = [];
+  if (o.kmLeft != null) parts.push(o.kmLeft <= 0 ? `${fmtNum(-o.kmLeft)} km überfällig` : `noch ${fmtNum(o.kmLeft)} km`);
+  if (o.dueDate) parts.push(o.daysLeft <= 0 ? 'Zeit abgelaufen' : `bis ${fmtDate(o.dueDate, { month: '2-digit', year: 'numeric' })}`);
+  return `
+    <dt>Ölwechsel</dt>
+    <dd class="oil">
+      <span class="oil-bar" role="img" aria-label="${Math.round(o.pct * 100)} % des Intervalls verbraucht"><span class="${o.level}" style="width:${Math.round(o.pct * 100)}%"></span></span>
+      <span class="badge ${o.level}">${esc(parts.join(' · '))}</span>
+    </dd>`;
+}
+
+// ---------- Verbrauch über Zeit ----------
+/** Ein Wert je Volltank-zu-Volltank-Abschnitt. */
+function consumptionSeries(expenses) {
+  const fuel = expenses
+    .filter((e) => e.category === 'fuel' && e.mileageKm != null && e.liters)
+    .sort((a, b) => a.mileageKm - b.mileageKm || a.date.localeCompare(b.date));
+  const out = [];
+  let lastFull = null;
+  let pending = 0;
+  for (const e of fuel) {
+    if (lastFull) pending += e.liters;
+    if (e.fullTank) {
+      const km = lastFull ? e.mileageKm - lastFull.mileageKm : 0;
+      if (lastFull && km > 30) out.push({ date: e.date, value: (pending / km) * 100, km, liters: pending });
+      lastFull = e;
+      pending = 0;
+    }
+  }
+  return out;
+}
+
+function renderConsumptionSection(expenses) {
+  const series = consumptionSeries(expenses);
+  if (series.length < 2) {
+    return `<section class="cons"><h4>Verbrauch über Zeit</h4><p class="muted small">Erscheint, sobald du mindestens dreimal vollgetankt und dabei den Kilometerstand eingetragen hast.</p></section>`;
+  }
+  const avg = series.reduce((s, p) => s + p.liters, 0) / series.reduce((s, p) => s + p.km, 0) * 100;
+  const last = series[series.length - 1];
+  const diff = last.value - avg;
+  return `
+    <section class="cons">
+      <h4>Verbrauch über Zeit <span class="muted small">· l/100 km je Tankfüllung</span></h4>
+      <p class="small cons-note">Letzte Füllung: <strong>${fmtDec(last.value)} l</strong> (${diff >= 0 ? '+' : '−'}${fmtDec(Math.abs(diff))} l zum Schnitt von ${fmtDec(avg)} l)</p>
+      <div class="fig cons-fig" data-series='${esc(JSON.stringify(series))}' data-avg="${avg}"><svg aria-label="Verbrauch je Tankfüllung"></svg><div class="cc-tooltip" hidden></div></div>
+    </section>`;
+}
+
+// Diagramm in echter Pixelgröße zeichnen (und bei Größenänderung neu)
+const consObserver = new ResizeObserver((entries) => entries.forEach((e) => drawConsumption(e.target)));
+
+function drawConsumption(fig) {
+  const svg = fig.querySelector('svg');
+  const series = JSON.parse(fig.dataset.series);
+  const avg = Number(fig.dataset.avg);
+  const W = fig.clientWidth;
+  const H = fig.clientHeight;
+  if (!W || !H) return;
+  const m = { l: 40, r: 12, t: 12, b: 26 };
+  const vals = series.map((p) => p.value);
+  const lo = Math.floor(Math.min(...vals, avg) - 0.5);
+  const hi = Math.ceil(Math.max(...vals, avg) + 0.5);
+  const t0 = parseDay(series[0].date).getTime();
+  const t1 = parseDay(series[series.length - 1].date).getTime();
+  const x = (d) => m.l + ((parseDay(d).getTime() - t0) / Math.max(1, t1 - t0)) * (W - m.l - m.r);
+  const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  const step = hi - lo > 4 ? 2 : 1;
+  const ticks = [];
+  for (let v = lo; v <= hi; v += step) ticks.push(v);
+  const narrow = W < 420;
+  const labelIdx = narrow ? [0, series.length - 1] : [0, Math.floor((series.length - 1) / 2), series.length - 1];
+  const path = series.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)},${y(p.value).toFixed(1)}`).join('');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = `
+    ${ticks.map((v) => `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v} l</text>`).join('')}
+    <line class="avg" x1="${m.l}" x2="${W - m.r}" y1="${y(avg)}" y2="${y(avg)}"/>
+    <text class="axis avg-label" x="${W - m.r}" y="${y(avg) - 6}" text-anchor="end">Ø ${fmtDec(avg)} l</text>
+    <path class="line" d="${path}"/>
+    ${series.map((p) => `<circle class="pt" cx="${x(p.date)}" cy="${y(p.value)}" r="4"/>`).join('')}
+    ${[...new Set(labelIdx)]
+      .map((i) => `<text class="axis" x="${x(series[i].date)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === series.length - 1 ? 'end' : 'middle'}">${fmtDate(series[i].date, { day: '2-digit', month: '2-digit', year: '2-digit' })}</text>`)
+      .join('')}
+    <circle class="pt-active" r="6" cx="0" cy="0" visibility="hidden"/>
+  `;
+  const tip = fig.querySelector('.cc-tooltip');
+  const active = svg.querySelector('.pt-active');
+  const show = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    const px = clientX - r.left;
+    const p = series.reduce((a, b) => (Math.abs(x(b.date) - px) < Math.abs(x(a.date) - px) ? b : a));
+    active.setAttribute('cx', x(p.date));
+    active.setAttribute('cy', y(p.value));
+    active.setAttribute('visibility', 'visible');
+    tip.innerHTML = `<strong>${fmtDate(p.date)}</strong><br/>${fmtDec(p.value)} l/100 km<br/>${fmtNum(p.km)} km · ${fmtDec(p.liters)} l`;
+    tip.hidden = false;
+    tip.style.left = `${Math.min(Math.max(x(p.date), 70), W - 70)}px`;
+    tip.style.top = '0px';
+  };
+  svg.onpointermove = (e) => show(e.clientX);
+  svg.onpointerdown = (e) => show(e.clientX);
+  svg.onpointerleave = () => {
+    tip.hidden = true;
+    active.setAttribute('visibility', 'hidden');
+  };
+}
+
+// ---------- Spritpreise ----------
+const FUEL_LABEL = { e5: 'Super E5', e10: 'Super E10', diesel: 'Diesel' };
+
+/** 1.739 -> "1,73" + hochgestellte 9, wie an der Tankstelle */
+function fmtFuelPrice(p) {
+  const s = p.toFixed(3).replace('.', ',');
+  return `${s.slice(0, -1)}<sup>${s.slice(-1)}</sup>`;
+}
+
+function cheapestStations(f) {
+  const type = f.type || 'e10';
+  return (f.stations || []).filter((st) => st.isOpen && st[type] != null).sort((a, b) => a[type] - b[type] || a.dist - b.dist);
+}
+
+function renderFuel() {
+  const el = $('#fuel');
+  const f = state.fuel;
+  $('#fuel-type').value = state.settings.fuel?.type || 'e10';
+  $('#fuel-type').hidden = !f?.configured;
+  if (!f || !f.configured) {
+    el.innerHTML = `<div class="empty">Aktuelle Preise der Tankstellen rund um ${esc(state.settings.weather?.name || 'deinen Ort')}.<br/>Dafür brauchst du einen kostenlosen Schlüssel von Tankerkönig.<br/><button class="btn" data-open="settings-dialog" data-focus="fuel-key">Einrichten</button></div>`;
+    return;
+  }
+  const type = f.type || 'e10';
+  const list = cheapestStations(f);
+  const closed = (f.stations || []).filter((st) => !st.isOpen).length;
+  const lastFuel = state.expenses.find((e) => e.category === 'fuel' && e.liters);
+  const lastPrice = lastFuel ? lastFuel.amount / lastFuel.liters : null;
+  const best = list[0]?.[type];
+  const errorBox = f.error ? `<div class="error-box">⚠ ${esc(f.error)}${f.stale ? ' Angezeigt wird der letzte Stand.' : ''}</div>` : '';
+  if (!list.length) {
+    el.innerHTML = `${errorBox}<div class="empty">Gerade keine geöffnete Tankstelle mit ${FUEL_LABEL[type]} im Umkreis von ${f.radius || '?'} km.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    ${errorBox}
+    ${
+      lastPrice != null && best != null
+        ? `<p class="fuel-compare small">Dein letzter Tankpreis: <strong>${fmtDec(lastPrice, 3)} €</strong> · heute ab <strong>${fmtDec(best, 3)} €</strong>${
+            lastFuel.liters ? ` <span class="muted">(${best < lastPrice ? 'günstiger' : 'teurer'}: ${fmtEur(Math.abs(lastPrice - best) * 40)} pro 40 l)</span>` : ''
+          }</p>`
+        : ''
+    }
+    <ol class="fuel-list">
+      ${list
+        .slice(0, 5)
+        .map(
+          (st, i) => `
+        <li class="${i === 0 ? 'best' : ''}">
+          <div class="fuel-main">
+            <a href="https://www.google.com/maps/search/?api=1&query=${st.lat},${st.lng}" target="_blank" rel="noopener"><strong>${esc(st.name)}</strong></a>
+            <div class="muted small">${esc(st.street)}${st.place ? `, ${esc(st.place)}` : ''} · ${fmtDec(st.dist, 1)} km</div>
+          </div>
+          <div class="fuel-price">${fmtFuelPrice(st[type])}<span class="muted small"> €</span></div>
+        </li>`,
+        )
+        .join('')}
+    </ol>
+    <p class="muted small fuel-foot">${FUEL_LABEL[type]}, geöffnete Tankstellen im Umkreis von ${f.radius} km${closed ? `, ${closed} geschlossen` : ''} · Stand ${fmtTime(new Date(f.fetchedAt))} Uhr · Daten: MTS-K über Tankerkönig (CC BY 4.0)</p>
+  `;
+}
+
+async function loadFuel(refresh = false) {
+  state.fuel = await api(`/api/fuelprices${refresh ? '?refresh=1' : ''}`);
+}
+
+$('#fuel-type').addEventListener('change', async (e) => {
+  try {
+    state.settings = await api('/api/settings/fuel', { method: 'PUT', body: { type: e.target.value } });
+    await loadFuel();
+  } catch (err) {
+    toast(err.message, true);
+  }
+  renderFuel();
+  renderSummary();
+});
+
+// ---------- Morgenbriefing ----------
+function renderBriefing() {
+  const el = $('#briefing');
+  const b = state.briefing;
+  if (b?.url) $('#briefing-open').href = b.url;
+  if (!b) {
+    el.innerHTML = '';
+    return;
+  }
+  if (b.error) {
+    el.innerHTML = `<div class="error-box">⚠ Briefing konnte nicht geladen werden: ${esc(b.error)}</div><a class="btn btn-ghost" href="${esc(b.url)}" target="_blank" rel="noopener">Briefing öffnen</a>`;
+    return;
+  }
+  const age = daysUntil(b.date);
+  const when = `${relativeDay(b.date).toLowerCase()}${b.generatedAt ? `, ${fmtTime(new Date(b.generatedAt))} Uhr` : ''}`;
+  $('#briefing-title').textContent = `📰 Morgenbriefing · ${parseDay(b.date).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })}`;
+  el.innerHTML = `
+    <p class="muted small briefing-meta">Erstellt ${esc(when)}${age < 0 ? ' <span class="badge warn">nicht von heute</span>' : ''}</p>
+    <ol class="news">
+      ${b.stories
+        .map(
+          (st) => `
+        <li>
+          <div class="news-top"><span class="badge">${esc(st.topic)}</span><span class="muted small">${st.sourceCount} ${st.sourceCount === 1 ? 'Quelle' : 'Quellen'}</span></div>
+          ${st.url ? `<a class="news-title" href="${esc(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>` : `<span class="news-title">${esc(st.title)}</span>`}
+          ${st.summary ? `<p class="news-sum">${esc(st.summary)}</p>` : ''}
+        </li>`,
+        )
+        .join('')}
+    </ol>
+    ${b.markets ? `<p class="markets small">📈 ${b.dax ? `<strong>DAX ${fmtNum(Math.round(b.dax.price))}</strong> (${b.dax.change >= 0 ? '+' : '−'}${fmtDec(Math.abs(b.dax.change))} %) · ` : ''}${esc(b.markets)}</p>` : ''}
+    <a class="btn btn-ghost briefing-more" href="${esc(b.url)}" target="_blank" rel="noopener">Mehr im Briefing →</a>
+  `;
+}
+
+async function loadBriefing(refresh = false) {
+  state.briefing = await api(`/api/briefing${refresh ? '?refresh=1' : ''}`);
+}
+
+// ---------- Notizen ----------
+function renderNotes() {
+  const list = $('#notes');
+  if (!state.notes.length) {
+    list.innerHTML = '<li class="empty">Noch keine Notizen. Kennzeichen vom Parkplatz, Reifendruck, Einkaufsliste … alles, was du schnell festhalten willst.</li>';
+    return;
+  }
+  list.innerHTML = state.notes
+    .map(
+      (n) => `
+      <li class="note ${n.pinned ? 'pinned' : ''}" data-id="${esc(n.id)}">
+        <div class="note-text">${esc(n.text)}</div>
+        <div class="note-foot">
+          <span class="muted small">${n.pinned ? '📌 angeheftet · ' : ''}${esc(fmtNoteDate(n.updatedAt))}</span>
+          <span class="ex-actions">
+            <button data-action="pin" title="${n.pinned ? 'Lösen' : 'Anheften'}" aria-label="${n.pinned ? 'Lösen' : 'Anheften'}">📌</button>
+            <button data-action="copy" title="Kopieren" aria-label="Kopieren">⧉</button>
+            <button data-action="edit" title="Bearbeiten" aria-label="Bearbeiten">✎</button>
+            <button data-action="delete" title="Löschen" aria-label="Löschen">✕</button>
+          </span>
+        </div>
+      </li>`,
+    )
+    .join('');
+}
+
+function fmtNoteDate(iso) {
+  const d = new Date(iso);
+  const diff = daysUntil(dayKey(d));
+  if (diff === 0) return `heute ${fmtTime(d)}`;
+  if (diff === -1) return `gestern ${fmtTime(d)}`;
+  return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+
+async function loadNotes() {
+  state.notes = await api('/api/notes');
+}
+
+function resetNoteForm() {
+  const form = $('#note-form');
+  form.reset();
+  form.id.value = '';
+  $('#note-cancel').hidden = true;
+  form.querySelector('button[type=submit]').textContent = 'Speichern';
+}
+
+$('#note-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const id = form.id.value;
+  try {
+    if (id) await api(`/api/notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: { text: form.text.value } });
+    else await api('/api/notes', { method: 'POST', body: { text: form.text.value } });
+    resetNoteForm();
+    await loadNotes();
+    renderNotes();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('#note-cancel').addEventListener('click', resetNoteForm);
+
+$('#notes').addEventListener('click', async (e) => {
+  const action = e.target.closest('[data-action]')?.dataset.action;
+  const li = e.target.closest('li[data-id]');
+  if (!action || !li) return;
+  const note = state.notes.find((n) => n.id === li.dataset.id);
+  if (!note) return;
+  try {
+    if (action === 'edit') {
+      const form = $('#note-form');
+      form.text.value = note.text;
+      form.id.value = note.id;
+      $('#note-cancel').hidden = false;
+      form.querySelector('button[type=submit]').textContent = 'Ändern';
+      form.text.focus();
+      return;
+    }
+    if (action === 'copy') {
+      await navigator.clipboard.writeText(note.text);
+      return toast('Kopiert');
+    }
+    if (action === 'pin') await api(`/api/notes/${encodeURIComponent(note.id)}`, { method: 'PATCH', body: { pinned: !note.pinned } });
+    if (action === 'delete') {
+      if (!confirm('Notiz löschen?')) return;
+      await api(`/api/notes/${encodeURIComponent(note.id)}`, { method: 'DELETE' });
+    }
+    await loadNotes();
+    renderNotes();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 // ---------- Auto-Kosten ----------
 const CATEGORY_ICONS = {
   fuel: '⛽',
+  oil: '🛢',
   service: '🔧',
   repair: '🛠',
   tires: '🛞',
@@ -614,6 +1049,8 @@ function renderCosts() {
 
     ${renderCostChart(monthlySeries(expenses))}
 
+    ${renderConsumptionSection(expenses)}
+
     <div class="cost-split">
       <section>
         <h4>Nach Art (${rangeLabel})</h4>
@@ -668,6 +1105,11 @@ function renderCosts() {
       </section>
     </div>
   `;
+  observeCharts();
+}
+
+function observeCharts() {
+  document.querySelectorAll('.cons-fig').forEach((fig) => consObserver.observe(fig));
 }
 
 async function loadExpenses() {
@@ -804,6 +1246,12 @@ function renderSettings() {
     : '<span class="badge">nicht verbunden</span> <span class="muted">Ohne Todoist werden die Aufgaben lokal im Dashboard gespeichert.</span>';
   $('#todoist-form').filter.value = s.todoist.filter || '';
   $('#todoist-disconnect').hidden = !s.todoist.connected || s.todoist.fromEnv;
+  const fuelForm = $('#fuel-form');
+  $('#fuel-status').innerHTML = s.fuel?.configured ? '<span class="badge ok">Schlüssel hinterlegt</span>' : '<span class="badge">kein Schlüssel</span>';
+  fuelForm.type.value = s.fuel?.type || 'e10';
+  fuelForm.radius.value = String(s.fuel?.radius || 5);
+  $('#fuel-remove').hidden = !s.fuel?.configured;
+  $('#briefing-form').url.value = s.briefing?.url || '';
   const info = backupInfo();
   $('#backup-status').textContent = info.lastBackupAt
     ? `Letzte Sicherung: ${new Date(info.lastBackupAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}`
@@ -887,6 +1335,32 @@ $('#todoist-disconnect').addEventListener('click', async () => {
   await afterSettingsChange(settings, 'Todoist getrennt.');
 });
 
+$('#fuel-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const settings = await api('/api/settings/fuel', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
+    e.target.apiKey.value = '';
+    await afterSettingsChange(settings, 'Spritpreise gespeichert.');
+  } catch (err) {
+    setMsg('#settings-msg', err.message, 'error');
+  }
+});
+
+$('#fuel-remove').addEventListener('click', async () => {
+  const settings = await api('/api/settings/fuel', { method: 'PUT', body: { remove: true } });
+  await afterSettingsChange(settings, 'Tankerkönig-Schlüssel entfernt.');
+});
+
+$('#briefing-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const settings = await api('/api/settings/briefing', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
+    await afterSettingsChange(settings, 'Briefing-Adresse gespeichert.');
+  } catch (err) {
+    setMsg('#settings-msg', err.message, 'error');
+  }
+});
+
 // ---------- Sicherung ----------
 function downloadFile(text, filename, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -932,7 +1406,19 @@ function renderSummary() {
     stats.push({
       label: `Wetter ${w.location || ''}`, view: 'today',
       value: `${wxIcon(w.current.code, w.current.isDay)} ${deg(w.current.temperature)}`,
-      hint: rainHint(w).wet ? rainHint(w).text : `${wxText(w.current.code)}, ${deg(w.daily[0].min)} / ${deg(w.daily[0].max)}`,
+      hint: frostInfo(w)?.short || (rainHint(w).wet ? rainHint(w).text : `${wxText(w.current.code)}, ${deg(w.daily[0].min)} / ${deg(w.daily[0].max)}`),
+      cls: frostInfo(w)?.level === 'bad' ? 'warn' : '',
+    });
+  }
+  const alerts = state.alerts?.alerts || [];
+  if (alerts.length) {
+    const top = alerts[0];
+    stats.push({
+      label: (SEVERITY[top.severity] || SEVERITY.minor).label,
+      view: 'today',
+      value: `⚠ ${top.event}`,
+      hint: alerts.length > 1 ? `+${alerts.length - 1} weitere Warnung${alerts.length > 2 ? 'en' : ''}` : top.expires ? `bis ${fmtWhen(top.expires)}` : 'Deutscher Wetterdienst',
+      cls: ['severe', 'extreme'].includes(top.severity) ? 'bad' : 'warn',
     });
   }
   stats.push({
@@ -957,6 +1443,16 @@ function renderSummary() {
         : 'Noch nicht eingerichtet',
     cls: warnings.some((w) => w.level === 'bad') ? 'bad' : warnings.length ? 'warn' : '',
   });
+  const cheapest = state.fuel?.configured ? cheapestStations(state.fuel)[0] : null;
+  if (cheapest) {
+    const type = state.fuel.type || 'e10';
+    stats.push({
+      label: `${FUEL_LABEL[type]} ab`,
+      view: 'car',
+      value: `${fmtDec(cheapest[type], 3)} €`,
+      hint: `${cheapest.name}, ${fmtDec(cheapest.dist, 1)} km`,
+    });
+  }
   if (state.expenses.length) {
     const monthTotal = state.expenses.filter((e) => monthKey(e.date) === monthKey(today)).reduce((sum, e) => sum + e.amount, 0);
     const lastFuel = state.expenses.find((e) => e.category === 'fuel');
@@ -1043,7 +1539,7 @@ async function loadAll(refresh = false) {
     const s = await api('/api/state');
     Object.assign(state, s);
     // Unabhängige Quellen parallel laden; ein Fehler in einer Quelle blockiert die anderen nicht.
-    const results = await Promise.allSettled([loadTasks(refresh), loadWeather(refresh), loadExpenses()]);
+    const results = await Promise.allSettled([loadTasks(refresh), loadWeather(refresh), loadExpenses(), loadAlerts(refresh), loadFuel(refresh), loadBriefing(refresh), loadNotes()]);
     const failed = results.find((r) => r.status === 'rejected');
     if (failed) toast(`Teilweise nicht geladen: ${failed.reason.message}`, true);
     state.loadedAt = new Date();
@@ -1059,6 +1555,9 @@ async function loadAll(refresh = false) {
 function renderAll() {
   renderSummary();
   renderWeather();
+  renderBriefing();
+  renderFuel();
+  renderNotes();
   renderCosts();
   renderTasks();
   renderCar();

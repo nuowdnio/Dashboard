@@ -1,9 +1,10 @@
 // Service Worker: macht das Dashboard als App installierbar und offline nutzbar.
 // Deine Einträge liegen ohnehin im Browser; zwischengespeichert werden hier nur die App-Dateien
-// und die letzte Wettervorhersage. Todoist wird nie zwischengespeichert (enthält deinen Token).
-const CACHE = 'dashboard-v2';
+// sowie die letzte Wettervorhersage und Warnlage. Todoist und Tankerkönig laufen nie über diesen Speicher
+// (enthalten deine Schlüssel); die Spritpreise merkt sich die App selbst.
+const CACHE = 'dashboard-v3';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'local-api.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
-const WEATHER_HOSTS = ['api.open-meteo.com', 'geocoding-api.open-meteo.com'];
+const WEATHER_HOSTS = ['api.open-meteo.com', 'geocoding-api.open-meteo.com', 'api.brightsky.dev'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
