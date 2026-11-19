@@ -16,60 +16,92 @@
       </div>
       <div class="topbar-right">
         <div id="clock" class="clock">--:--</div>
+        <button class="icon-btn" data-open="package-dialog" title="Paket erwarten" aria-label="Paket erwarten">📦</button>
+        <button class="icon-btn" data-open="settings-dialog" title="Einstellungen" aria-label="Einstellungen">⚙</button>
         <button id="refresh" class="icon-btn" title="Aktualisieren" aria-label="Aktualisieren">⟳</button>
       </div>
     </header>
 
     <section id="summary" class="summary" aria-label="Übersicht"></section>
 
-    <main class="grid">
-      <!-- Termine -->
-      <article class="card card-events">
-        <header class="card-head">
-          <h2>📅 Anstehende Termine</h2>
-          <div class="card-actions">
-            <select id="event-range" aria-label="Zeitraum">
-              <option value="7">7 Tage</option>
-              <option value="14" selected>14 Tage</option>
-              <option value="30">30 Tage</option>
+    <!-- Pakete: nur sichtbar, wenn eine Sendung erwartet wird -->
+    <article id="packages-card" class="card card-packages" hidden>
+      <header class="card-head">
+        <h2>📦 Pakete unterwegs</h2>
+        <div class="card-actions">
+          <button class="btn btn-ghost" data-open="package-dialog">+ Paket</button>
+        </div>
+      </header>
+      <ul id="packages" class="card-body package-list"></ul>
+    </article>
+
+    <main class="columns">
+      <div class="col col-main">
+        <!-- Termine -->
+        <article class="card card-events">
+          <header class="card-head">
+            <h2>📅 Anstehende Termine</h2>
+            <div class="card-actions">
+              <select id="event-range" aria-label="Zeitraum">
+                <option value="7">7 Tage</option>
+                <option value="14" selected>14 Tage</option>
+                <option value="30">30 Tage</option>
+              </select>
+              <button class="btn btn-ghost" data-open="calendar-dialog">Kalender</button>
+            </div>
+          </header>
+          <div id="events" class="card-body"></div>
+        </article>
+
+        <!-- Auto -->
+        <article class="card card-car">
+          <header class="card-head">
+            <h2>🚗 Mein Auto</h2>
+            <div class="card-actions">
+              <button class="btn btn-ghost" data-open="car-dialog">Bearbeiten</button>
+            </div>
+          </header>
+          <div id="car" class="card-body"></div>
+        </article>
+      </div>
+
+      <div class="col col-side">
+        <!-- Wetter -->
+        <article class="card card-weather">
+          <header class="card-head">
+            <h2 id="weather-title">🌤 Wetter</h2>
+            <div class="card-actions">
+              <button class="btn btn-ghost" data-open="settings-dialog" data-focus="weather-search">Ort ändern</button>
+            </div>
+          </header>
+          <div id="weather" class="card-body"></div>
+        </article>
+
+        <!-- Aufgaben -->
+        <article class="card card-tasks">
+          <header class="card-head">
+            <h2>✅ Aufgaben <span id="task-source" class="badge" hidden>Todoist</span></h2>
+            <div class="card-actions">
+              <label class="toggle" id="show-done-wrap"><input type="checkbox" id="show-done" /> Erledigte zeigen</label>
+              <a id="todoist-open" class="btn btn-ghost" href="https://app.todoist.com/app/today" target="_blank" rel="noopener" hidden>Todoist öffnen</a>
+            </div>
+          </header>
+          <form id="task-form" class="task-form" autocomplete="off">
+            <input name="title" placeholder="Neue Aufgabe …" required maxlength="500" />
+            <input name="due" type="date" aria-label="Fällig am" />
+            <select name="priority" aria-label="Priorität">
+              <option value="normal">Normal</option>
+              <option value="high">Hoch</option>
+              <option value="low">Niedrig</option>
             </select>
-            <button class="btn btn-ghost" data-open="calendar-dialog">Kalender verwalten</button>
-          </div>
-        </header>
-        <div id="events" class="card-body"></div>
-      </article>
-
-      <!-- Aufgaben -->
-      <article class="card card-tasks">
-        <header class="card-head">
-          <h2>✅ Aufgaben</h2>
-          <div class="card-actions">
-            <label class="toggle"><input type="checkbox" id="show-done" /> Erledigte zeigen</label>
-          </div>
-        </header>
-        <form id="task-form" class="task-form" autocomplete="off">
-          <input name="title" placeholder="Neue Aufgabe …" required maxlength="300" />
-          <input name="due" type="date" aria-label="Fällig am" />
-          <select name="priority" aria-label="Priorität">
-            <option value="normal">Normal</option>
-            <option value="high">Hoch</option>
-            <option value="low">Niedrig</option>
-          </select>
-          <button class="btn" type="submit">Hinzufügen</button>
-        </form>
-        <ul id="tasks" class="card-body task-list"></ul>
-      </article>
-
-      <!-- Auto -->
-      <article class="card card-car">
-        <header class="card-head">
-          <h2>🚗 Mein Auto</h2>
-          <div class="card-actions">
-            <button class="btn btn-ghost" data-open="car-dialog">Bearbeiten</button>
-          </div>
-        </header>
-        <div id="car" class="card-body"></div>
-      </article>
+            <button class="btn" type="submit">Hinzufügen</button>
+          </form>
+          <p id="task-hint" class="muted small task-hint" hidden>
+            Wie in Todoist: <em>„Reifen wechseln morgen p1 #Auto“</em>. Datum, Priorität und Projekt werden erkannt.
+          </p>
+          <ul id="tasks" class="card-body task-list"></ul>
+        </article>
+      </div>
     </main>
 
     <footer class="footer muted">
@@ -80,13 +112,13 @@
     <dialog id="car-dialog">
       <form id="car-form" method="dialog" class="dialog-form">
         <h3>Auto-Status bearbeiten</h3>
-        <p class="muted small">Vorerst manuelle Eingabe. Eine automatische Anbindung (Hersteller-App/API) kann später ergänzt werden.</p>
+        <p class="muted small">Ältere Modelle wie der Ford Focus haben keine Online-Schnittstelle. Die Werte trägst du deshalb hier ein, z. B. nach dem Tanken oder nach der Werkstatt.</p>
         <div class="form-grid">
-          <label>Name <input name="name" placeholder="z. B. Familienauto" /></label>
-          <label>Modell <input name="model" placeholder="z. B. VW Golf 8" /></label>
+          <label>Name <input name="name" placeholder="z. B. Mein Focus" /></label>
+          <label>Modell <input name="model" placeholder="z. B. Ford Focus 1.6" /></label>
           <label>Kennzeichen <input name="licensePlate" placeholder="M-AB 1234" /></label>
           <label>Kilometerstand <input name="mileageKm" type="number" min="0" inputmode="numeric" /></label>
-          <label>Tank / Akku (%) <input name="fuelPercent" type="number" min="0" max="100" /></label>
+          <label>Tank (%) <input name="fuelPercent" type="number" min="0" max="100" /></label>
           <label>Reichweite (km) <input name="rangeKm" type="number" min="0" /></label>
           <label>Nächste HU / TÜV <input name="nextInspection" type="date" /></label>
           <label>Nächste Inspektion <input name="nextService" type="date" /></label>
@@ -100,7 +132,7 @@
             </select>
           </label>
           <label>Standort <input name="location" placeholder="z. B. Tiefgarage" /></label>
-          <label class="span-2">Notizen <textarea name="notes" rows="2"></textarea></label>
+          <label class="span-2">Notizen <textarea name="notes" rows="2" placeholder="z. B. Ölwechsel fällig bei 152.000 km"></textarea></label>
         </div>
         <div class="dialog-actions">
           <button class="btn btn-ghost" value="cancel" formnovalidate>Abbrechen</button>
@@ -109,20 +141,117 @@
       </form>
     </dialog>
 
+    <!-- Dialog: Paket -->
+    <dialog id="package-dialog">
+      <form id="package-form" class="dialog-form" autocomplete="off">
+        <h3 id="package-dialog-title">Paket erwarten</h3>
+        <p class="muted small">Die Paket-Kachel erscheint nur, solange eine Sendung unterwegs ist. Nach der Zustellung verschwindet sie wieder.</p>
+        <input type="hidden" name="id" />
+        <div class="form-grid">
+          <label class="span-2">Was kommt? <input name="title" placeholder="z. B. Bremsbeläge, Amazon-Bestellung" maxlength="120" /></label>
+          <label>Sendungsnummer <input name="trackingNumber" placeholder="optional" maxlength="60" /></label>
+          <label>Paketdienst
+            <select name="carrier">
+              <option value="">automatisch erkennen</option>
+              <option value="dhl">DHL / Deutsche Post</option>
+              <option value="hermes">Hermes</option>
+              <option value="dpd">DPD</option>
+              <option value="gls">GLS</option>
+              <option value="ups">UPS</option>
+              <option value="amazon">Amazon</option>
+              <option value="other">Sonstige</option>
+            </select>
+          </label>
+          <label>Erwartet am <input name="expected" type="date" /></label>
+          <label>Status
+            <select name="status">
+              <option value="expected">Angekündigt</option>
+              <option value="transit">Unterwegs</option>
+              <option value="out_for_delivery">In Zustellung</option>
+              <option value="delivered">Zugestellt</option>
+              <option value="problem">Problem</option>
+            </select>
+          </label>
+          <label class="span-2">Eigener Tracking-Link <input name="customUrl" type="url" placeholder="optional, z. B. Link aus der Versandmail" /></label>
+        </div>
+        <p id="package-msg" class="msg" role="status"></p>
+        <div class="dialog-actions">
+          <button class="btn btn-ghost" type="button" data-close>Abbrechen</button>
+          <button class="btn" type="submit">Speichern</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Dialog: Einstellungen -->
+    <dialog id="settings-dialog">
+      <div class="dialog-form">
+        <h3>Einstellungen</h3>
+
+        <section class="stack" id="weather-settings">
+          <h4>🌤 Wetter-Ort</h4>
+          <p class="muted small" id="weather-current-place"></p>
+          <form id="weather-search-form" class="row">
+            <input id="weather-search" name="q" placeholder="Ort suchen, z. B. Köln" minlength="2" required />
+            <button class="btn" type="submit">Suchen</button>
+          </form>
+          <ul id="weather-results" class="place-list"></ul>
+          <button class="btn btn-ghost" id="weather-geo" type="button">📍 Aktuellen Standort verwenden</button>
+        </section>
+
+        <section class="stack">
+          <h4>✅ Todoist</h4>
+          <p class="small" id="todoist-status"></p>
+          <form id="todoist-form" class="stack-inner" autocomplete="off">
+            <label>API-Token
+              <input name="token" type="password" placeholder="In Todoist: Einstellungen → Integrationen → Entwickler" />
+            </label>
+            <label>Welche Aufgaben anzeigen? (Todoist-Filter)
+              <input name="filter" placeholder="overdue | 7 days" />
+            </label>
+            <p class="muted small">Standard: überfällige und die der nächsten 7 Tage. Beispiele: <code>today | overdue</code>, <code>overdue | 7 days | p1</code>, <code>#Privat &amp; 14 days</code>. Die Filter bitte in englischer Schreibweise eingeben.</p>
+            <div class="row">
+              <button class="btn" type="submit">Speichern</button>
+              <button class="btn btn-danger" type="button" id="todoist-disconnect">Trennen</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="stack">
+          <h4>📦 DHL-Sendungsstatus (optional)</h4>
+          <p class="muted small">Ohne Schlüssel gibt es für jedes Paket einen Link zur Sendungsverfolgung. Mit einem kostenlosen DHL-API-Schlüssel aktualisiert das Dashboard den Status von DHL-Paketen automatisch. Den Schlüssel bekommst du auf <em>developer.dhl.com</em> → Konto anlegen → App erstellen → API „Shipment Tracking – Unified“.</p>
+          <p class="small" id="dhl-status"></p>
+          <form id="dhl-form" class="row" autocomplete="off">
+            <input name="apiKey" type="password" placeholder="DHL API Key" />
+            <button class="btn" type="submit">Speichern</button>
+          </form>
+        </section>
+
+        <section class="stack">
+          <h4>📅 Kalender</h4>
+          <button class="btn btn-ghost" type="button" data-open="calendar-dialog">Kalender verwalten</button>
+        </section>
+
+        <p id="settings-msg" class="msg" role="status"></p>
+        <div class="dialog-actions">
+          <button class="btn btn-ghost" data-close>Schließen</button>
+        </div>
+      </div>
+    </dialog>
+
     <!-- Dialog: Kalender verwalten -->
     <dialog id="calendar-dialog">
       <div class="dialog-form">
         <h3>Kalender verwalten</h3>
         <ul id="calendar-list" class="calendar-list"></ul>
+        <input type="file" id="calendar-replace-file" accept=".ics,text/calendar" hidden />
 
         <details class="help" open>
           <summary>So verbindest du deinen Samsung Kalender</summary>
-          <p>Samsung Kalender selbst bietet keine Schnittstelle an. Er zeigt aber die Kalender der Konten an, die auf deinem Handy eingerichtet sind. Meistens ist das ein Google-Konto. Diese Konten liefern einen privaten iCal-Link:</p>
+          <p>Samsung Kalender selbst bietet keine Schnittstelle an. Liegen deine Termine nur auf dem Handy (Kalender „Mein Handy“ bzw. „Samsung-Konto“), kann das Dashboard sie nicht direkt lesen. Am besten klappt es so:</p>
           <ol>
-            <li><strong>Prüfen, wo die Termine liegen:</strong> Samsung Kalender → ☰ Menü → Kalender verwalten. Dort steht pro Kalender das Konto (z. B. „Google“ oder „Mein Handy/Samsung-Konto“).</li>
-            <li><strong>Termine im Google-Konto:</strong> Am PC <em>calendar.google.com</em> öffnen → Einstellungen ⚙ → links den Kalender wählen → „Kalender integrieren“ → <em>„Privatadresse im iCal-Format“</em> kopieren und unten einfügen.</li>
-            <li><strong>Termine nur auf dem Handy / im Samsung-Konto:</strong> In Samsung Kalender kannst du Termine in dein Google-Konto verschieben (Kalender verwalten → Termine verschieben). Danach geht es wie in Schritt 2. Alternativ: Termine als <em>.ics</em> exportieren und unten hochladen (aktualisiert sich dann aber nicht automatisch).</li>
-            <li><strong>Outlook / iCloud</strong> funktionieren genauso über deren „Kalender veröffentlichen/freigeben“-Link (ICS).</li>
+            <li><strong>Termine ins Google-Konto legen</strong> (empfohlen): In Samsung Kalender unter ⚙ Einstellungen den <em>Standardkalender</em> auf dein Google-Konto stellen. Dann landen neue Termine automatisch dort. Bestehende Termine überträgst du, indem du sie bearbeitest und als Kalender „Google“ wählst. Je nach Samsung-Version gibt es dafür unter <em>Kalender verwalten</em> auch eine Funktion zum Verschieben. Du nutzt weiterhin die Samsung-App wie gewohnt.</li>
+            <li><strong>Link holen:</strong> Am PC <em>calendar.google.com</em> → Einstellungen ⚙ → links den Kalender wählen → „Kalender integrieren“ → <em>„Privatadresse im iCal-Format“</em> kopieren und unten einfügen. Ab dann aktualisiert sich alles automatisch.</li>
+            <li><strong>Ohne Google:</strong> Termine als <em>.ics</em> exportieren (z. B. mit einer App wie „iCal Import/Export“) und unten hochladen. Mit „Datei ersetzen“ kannst du später einen neuen Export einspielen.</li>
           </ol>
           <p class="muted small">Der Link ist geheim. Er wird nur auf diesem Server gespeichert und nicht an den Browser zurückgegeben.</p>
         </details>
@@ -140,7 +269,7 @@
         <form id="calendar-file-form" class="stack" autocomplete="off">
           <h4>… oder .ics-Datei hochladen</h4>
           <div class="row">
-            <input name="name" placeholder="Name, z. B. Samsung Export" required maxlength="100" />
+            <input name="name" placeholder="Name, z. B. Handy-Export" required maxlength="100" />
             <input name="color" type="color" value="#22c55e" aria-label="Farbe" />
           </div>
           <input name="file" type="file" accept=".ics,text/calendar" required />
