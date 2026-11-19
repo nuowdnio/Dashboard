@@ -14,6 +14,7 @@ const state = {
   packages: [],
   packageErrors: [],
   loadedAt: null,
+  offlineSince: null,
 };
 
 // ---------- Hilfsfunktionen ----------
@@ -28,6 +29,9 @@ async function api(path, options = {}) {
     body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body,
   });
   if (res.status === 204) return null;
+  // Antwort aus dem Offline-Speicher des Service Workers (Server nicht erreichbar)
+  const cachedAt = res.headers.get('x-cached-at');
+  if (cachedAt) state.offlineSince = Math.min(state.offlineSince || Infinity, Number(cachedAt));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Fehler ${res.status}`);
   return data;
@@ -955,7 +959,7 @@ function renderMail() {
       <li class="mail ${x.unread ? 'unread' : ''}" data-uid="${x.uid}">
         <span class="mail-dot" title="${x.unread ? 'ungelesen' : ''}"></span>
         <div class="mail-main">
-          <div class="mail-from">${esc(x.from)} ${x.flagged ? '<span class="badge warn" title="Markiert">⭐ markiert</span>' : ''}</div>
+          <div class="mail-from">${esc(x.from)} ${x.flagged ? '<span title="Markiert" aria-label="markiert">⭐</span>' : ''}</div>
           <div class="mail-subject">${esc(x.subject)}</div>
         </div>
         <div class="mail-side">
@@ -1137,7 +1141,7 @@ function renderSummary() {
   const w = state.weather;
   if (w?.current) {
     stats.push({
-      label: `Wetter ${w.location || ''}`,
+      label: `Wetter ${w.location || ''}`, view: 'today',
       value: `${wxIcon(w.current.code, w.current.isDay)} ${deg(w.current.temperature)}`,
       hint: rainHint(w).wet ? rainHint(w).text : `${wxText(w.current.code)}, ${deg(w.daily[0].min)} / ${deg(w.daily[0].max)}`,
     });
@@ -1145,14 +1149,14 @@ function renderSummary() {
   const m = state.mail;
   if (m?.configured) {
     stats.push({
-      label: 'Mails',
+      label: 'Mails', view: 'mail',
       value: m.error ? '–' : `✉️ ${m.unreadCount}`,
       hint: m.error ? 'Postfach nicht erreichbar' : `ungelesen${m.flaggedCount ? ` · ${m.flaggedCount} markiert` : ''}`,
       cls: m.error ? 'bad' : '',
     });
   }
   stats.push({
-    label: isTodoist() ? 'Todoist' : 'Offene Aufgaben',
+    label: isTodoist() ? 'Todoist' : 'Offene Aufgaben', view: 'tasks',
     value: open.length,
     hint: state.taskError
       ? 'Todoist nicht erreichbar'
@@ -1167,14 +1171,14 @@ function renderSummary() {
   if (activePkgs.length) {
     const soon = activePkgs.filter((p) => p.status === 'out_for_delivery' || p.expected === today);
     stats.push({
-      label: 'Pakete',
+      label: 'Pakete', view: 'today',
       value: `📦 ${activePkgs.length}`,
       hint: soon.length ? `${soon.length} kommt heute` : activePkgs.map((p) => p.title).join(', '),
       cls: soon.length ? 'warn' : '',
     });
   }
   stats.push({
-    label: 'Auto',
+    label: 'Auto', view: 'car',
     value: warnings.length ? `${warnings.length} Hinweis${warnings.length === 1 ? '' : 'e'}` : state.car?.updatedAt ? 'Alles ok' : '–',
     hint: warnings.length
       ? warnings.map((w) => (w.d == null ? w.label : `${w.label} ${w.d <= 0 ? 'fällig' : `in ${w.d} T.`}`)).join(', ')
@@ -1187,7 +1191,7 @@ function renderSummary() {
     const monthTotal = state.expenses.filter((e) => monthKey(e.date) === monthKey(today)).reduce((sum, e) => sum + e.amount, 0);
     const lastFuel = state.expenses.find((e) => e.category === 'fuel');
     stats.push({
-      label: 'Autokosten Monat',
+      label: 'Autokosten Monat', view: 'car',
       value: fmtEur(monthTotal, 0),
       hint: lastFuel
         ? `Zuletzt getankt ${daysUntil(lastFuel.date) >= -1 ? relativeDay(lastFuel.date).toLowerCase() : `am ${fmtDate(lastFuel.date, { day: '2-digit', month: '2-digit' })}`}`
@@ -1195,10 +1199,13 @@ function renderSummary() {
     });
   }
 
+  setBadge('#tab-badge-mail', m?.configured && !m.error ? m.unreadCount : 0);
+  setBadge('#tab-badge-tasks', overdue.length + dueToday.length);
+
   $('#summary').innerHTML = stats
     .map(
       (s) => `
-      <div class="stat ${s.cls || ''}">
+      <div class="stat ${s.cls || ''}" data-goto="${s.view || ''}">
         <div class="label">${esc(s.label)}</div>
         <div class="value">${esc(s.value)}</div>
         <div class="hint" title="${esc(s.hint)}">${esc(s.hint)}</div>
@@ -1229,10 +1236,54 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) e.target.closest('dialog').close();
 });
 
+// ---------- Handy: Tabs ----------
+const VIEWS = ['today', 'mail', 'tasks', 'car'];
+
+function setBadge(sel, n) {
+  const el = $(sel);
+  el.hidden = !n;
+  el.textContent = n > 99 ? '99+' : String(n);
+}
+
+function setView(view, { scroll = true } = {}) {
+  if (!VIEWS.includes(view)) view = 'today';
+  document.body.dataset.view = view;
+  document.querySelectorAll('.tabbar button').forEach((b) => {
+    if (b.dataset.view === view) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  localStorage.setItem('dashboard-view', view);
+  if (scroll) window.scrollTo({ top: 0 });
+}
+
+$('.tabbar').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-view]');
+  if (btn) setView(btn.dataset.view);
+});
+
+// Übersichtskacheln öffnen auf dem Handy den passenden Tab
+$('#summary').addEventListener('click', (e) => {
+  const stat = e.target.closest('.stat[data-goto]');
+  if (stat?.dataset.goto && matchMedia('(max-width: 760px)').matches) setView(stat.dataset.goto);
+});
+
+function renderOffline() {
+  const el = $('#offline-banner');
+  if (!state.offlineSince) {
+    el.hidden = true;
+    return;
+  }
+  const t = new Date(state.offlineSince);
+  const when = dayKey(t) === todayKey() ? `${fmtTime(t)} Uhr` : t.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+  el.innerHTML = `⚠ Server nicht erreichbar. Du siehst den Stand von ${esc(when)}. <span class="muted">Auf dem Handy: Dashboard in Termux starten.</span>`;
+  el.hidden = false;
+}
+
 // ---------- Laden ----------
 async function loadAll(refresh = false) {
   const btn = $('#refresh');
   btn.classList.add('spin');
+  state.offlineSince = null;
   try {
     const s = await api('/api/state');
     Object.assign(state, s);
@@ -1251,6 +1302,7 @@ async function loadAll(refresh = false) {
 }
 
 function renderAll() {
+  renderOffline();
   renderSummary();
   renderPackages();
   renderWeather();
@@ -1262,6 +1314,17 @@ function renderAll() {
 
 $('#refresh').addEventListener('click', () => loadAll(true));
 
+// Start: zuletzt genutzter Tab bzw. Link-Parameter (App-Verknüpfungen: ?view=…, ?action=…)
+const params = new URLSearchParams(location.search);
+setView(params.get('view') || localStorage.getItem('dashboard-view') || 'today', { scroll: false });
+const startAction = params.get('action');
+if (params.size) history.replaceState(null, '', location.pathname);
+
+// Offline-Fähigkeit und Installation als App
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
 tickClock();
 setInterval(tickClock, 1000);
 setInterval(() => {
@@ -1272,4 +1335,11 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.loadedAt && Date.now() - state.loadedAt > 60_000) loadAll();
 });
 
-loadAll();
+loadAll().then(() => {
+  if (startAction === 'fuel') openExpenseDialog(null, 'fuel');
+  else if (startAction === 'package') openPackageDialog(null);
+  else if (startAction === 'task') {
+    setView('tasks');
+    $('#task-form').title.focus();
+  }
+});

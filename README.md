@@ -10,9 +10,37 @@ Persönliches Dashboard mit allen wichtigen Infos auf einen Blick:
 - **🚗 Auto-Status**: Kilometerstand, Tank, HU/TÜV, Inspektion (Datum oder km), Reifenwechsel, Notizen
 - **Übersichtsleiste** mit Wetter, Mails, fälligen Aufgaben, Paketen, Auto-Hinweisen und Autokosten des Monats
 
-Die Oberfläche ist auf Deutsch, passt sich an Handy und Tablet an und folgt dem hellen oder dunklen Modus des Geräts.
+Die Oberfläche ist auf Deutsch und folgt dem hellen oder dunklen Modus des Geräts. Auf dem Handy gibt es eine Tab-Leiste (Heute, Mails, Aufgaben, Auto), und das Dashboard lässt sich als App auf dem Startbildschirm installieren.
 
-## Starten
+## Auf dem Handy nutzen (kostenlos)
+
+Das Dashboard läuft direkt auf deinem Android-Handy, mit der kostenlosen App **Termux**. Es braucht keinen Server, kein Abo und kein Konto bei einem Hoster. Deine Zugangsdaten (GMX, Todoist) bleiben auf dem Handy. Es funktioniert überall, nicht nur im WLAN.
+
+**Einmalig einrichten (ca. 10 Minuten):**
+
+1. **F-Droid** von [f-droid.org](https://f-droid.org) installieren und darüber **Termux**, **Termux:Widget** und **Termux:Boot** installieren. Die Termux-Version im Play Store ist veraltet, deshalb alle drei aus F-Droid.
+2. In Chrome auf dem Handy die ZIP-Datei des Dashboards herunterladen (bei GitHub angemeldet):
+   `https://github.com/nuowdnio/Dashboard/archive/refs/heads/ccr-da9c4d43-8x19ts.zip`
+3. **Termux** öffnen und diese Zeilen eingeben, jede mit Enter. Bei der ersten Zeile den Speicherzugriff erlauben.
+   ```
+   termux-setup-storage
+   pkg install -y unzip
+   cd ~ && unzip -o "$(ls -t ~/storage/downloads/Dashboard-*.zip | head -1)" && bash Dashboard-*/scripts/termux-install.sh
+   ```
+   Das dauert beim ersten Mal ein paar Minuten. Danach öffnet sich das Dashboard im Browser.
+4. In Chrome: **Menü ⋮ → „App installieren“** (bzw. „Zum Startbildschirm hinzufügen“). Jetzt hast du ein Dashboard-Symbol wie bei jeder App. Lange auf das Symbol drücken zeigt Abkürzungen wie „Tanken“ und „Neue Aufgabe“.
+5. **Samsung-Akku-Einstellungen**, damit Android Termux nicht schlafen legt: *Einstellungen → Akku → Hintergrundnutzungsgrenzen → Nie in Standby versetzte Apps → Termux und Termux:Boot hinzufügen*.
+6. **Termux:Boot** einmal öffnen. Ab dann startet das Dashboard nach jedem Neustart des Handys von selbst.
+7. Optional: auf dem Startbildschirm lange drücken → *Widgets* → **Termux:Widget** → „Dashboard starten“. Ein Tipp darauf startet den Server und öffnet das Dashboard.
+
+**Gut zu wissen:**
+
+- Der Server braucht im Ruhezustand kaum Akku; Mails und Pakete werden nur geprüft, wenn du das Dashboard öffnest.
+- Läuft der Server einmal nicht, zeigt die App den letzten Stand mit einem Hinweis an. Dann im Widget „Dashboard starten“ antippen oder in Termux `dashboard-start` eingeben.
+- **Update:** neue ZIP-Datei herunterladen und Schritt 3 (nur die letzte Zeile) wiederholen. Deine Daten bleiben erhalten.
+- **Sicherung:** Deine Daten liegen in Termux unter `~/dashboard/data/db.json`. Die Autokosten kannst du jederzeit als CSV exportieren.
+
+## Auf dem Computer starten
 
 Voraussetzung: [Node.js](https://nodejs.org) ab Version 20.
 
@@ -112,7 +140,8 @@ lib/weather.js     Open-Meteo (Vorhersage, Ortssuche)
 lib/todoist.js     Todoist API v1
 lib/packages.js    Paketdienste, Tracking-Links, DHL-Status
 lib/mail.js        IMAP (GMX): offene Mails, Versandmails erkennen
-public/            Oberfläche (HTML/CSS/JS, kein Build-Schritt)
+public/            Oberfläche (HTML/CSS/JS, kein Build-Schritt), App-Manifest, Service Worker
+scripts/           Einrichten/Starten/Stoppen auf dem Handy (Termux)
 ```
 
 ### API

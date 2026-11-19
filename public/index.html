@@ -2,13 +2,20 @@
 <html lang="de">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0f1115" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f3f5f9" media="(prefers-color-scheme: light)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Dashboard" />
     <title>Mein Dashboard</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234f8cff'/><rect x='18' y='18' width='28' height='28' rx='6' fill='white'/><rect x='54' y='18' width='28' height='28' rx='6' fill='white' opacity='.7'/><rect x='18' y='54' width='64' height='28' rx='6' fill='white' opacity='.85'/></svg>" />
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body data-view="today">
+    <div id="offline-banner" class="offline-banner" hidden></div>
     <header class="topbar">
       <div>
         <h1 id="greeting">Hallo</h1>
@@ -22,10 +29,10 @@
       </div>
     </header>
 
-    <section id="summary" class="summary" aria-label="Übersicht"></section>
+    <section id="summary" class="summary" aria-label="Übersicht" data-tab="today"></section>
 
     <!-- Pakete: nur sichtbar, wenn eine Sendung erwartet wird -->
-    <article id="packages-card" class="card card-packages" hidden>
+    <article id="packages-card" class="card card-packages" data-tab="today" hidden>
       <header class="card-head">
         <h2>📦 Pakete unterwegs</h2>
         <div class="card-actions">
@@ -38,7 +45,7 @@
     <main class="columns">
       <div class="col col-main">
         <!-- Auto-Kosten -->
-        <article class="card card-costs">
+        <article class="card card-costs" data-tab="car">
           <header class="card-head">
             <h2 id="costs-title">💶 Auto-Kosten</h2>
             <div class="card-actions">
@@ -55,7 +62,7 @@
         </article>
 
         <!-- Mails -->
-        <article class="card card-mail">
+        <article class="card card-mail" data-tab="mail">
           <header class="card-head">
             <h2>✉️ Offene Mails <span id="mail-count" class="badge" hidden></span></h2>
             <div class="card-actions">
@@ -68,7 +75,7 @@
 
       <div class="col col-side">
         <!-- Wetter -->
-        <article class="card card-weather">
+        <article class="card card-weather" data-tab="today">
           <header class="card-head">
             <h2 id="weather-title">🌤 Wetter</h2>
             <div class="card-actions">
@@ -79,7 +86,7 @@
         </article>
 
         <!-- Aufgaben -->
-        <article class="card card-tasks">
+        <article class="card card-tasks" data-tab="tasks">
           <header class="card-head">
             <h2>✅ Aufgaben <span id="task-source" class="badge" hidden>Todoist</span></h2>
             <div class="card-actions">
@@ -104,7 +111,7 @@
         </article>
 
         <!-- Auto -->
-        <article class="card card-car">
+        <article class="card card-car" data-tab="car">
           <header class="card-head">
             <h2>🚗 Mein Auto</h2>
             <div class="card-actions">
@@ -115,6 +122,14 @@
         </article>
       </div>
     </main>
+
+    <!-- Navigation unten (nur auf dem Handy sichtbar) -->
+    <nav class="tabbar" aria-label="Bereiche">
+      <button data-view="today" aria-current="page"><span class="ti">🏠</span><span>Heute</span></button>
+      <button data-view="mail"><span class="ti">✉️</span><span>Mails</span><b class="tab-badge" id="tab-badge-mail" hidden></b></button>
+      <button data-view="tasks"><span class="ti">✅</span><span>Aufgaben</span><b class="tab-badge" id="tab-badge-tasks" hidden></b></button>
+      <button data-view="car"><span class="ti">🚗</span><span>Auto</span></button>
+    </nav>
 
     <footer class="footer muted">
       <span id="last-update"></span>

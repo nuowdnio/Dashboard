@@ -69,6 +69,7 @@ h4 { font-size: 14px; }
   margin-bottom: 18px;
 }
 .stat {
+  min-width: 0;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -522,3 +523,134 @@ code { background: var(--card-2); border: 1px solid var(--border); border-radius
   .cc-plot { margin-left: 46px; }
   .cc-bars { gap: 2px; }
 }
+
+/* ---------- Offline-Hinweis ---------- */
+.offline-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: -24px calc(-1 * clamp(14px, 3vw, 40px)) 14px;
+  padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+  background: color-mix(in srgb, var(--warn) 22%, var(--card));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border));
+  font-size: 13.5px;
+  text-align: center;
+}
+
+/* ---------- Tab-Leiste (nur Handy) ---------- */
+.tabbar { display: none; }
+
+@media (max-width: 760px) {
+  body {
+    padding: calc(14px + env(safe-area-inset-top)) 12px calc(86px + env(safe-area-inset-bottom));
+    font-size: 15.5px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .offline-banner { margin: calc(-14px - env(safe-area-inset-top)) -12px 12px; }
+
+  /* Nur die Kacheln des aktiven Tabs zeigen */
+  body[data-view='today'] [data-tab]:not([data-tab='today']),
+  body[data-view='mail'] [data-tab]:not([data-tab='mail']),
+  body[data-view='tasks'] [data-tab]:not([data-tab='tasks']),
+  body[data-view='car'] [data-tab]:not([data-tab='car']) { display: none !important; }
+
+  .tabbar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--card) 92%, transparent);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+  }
+  .tabbar button {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 0 4px;
+    background: none;
+    border: 0;
+    border-radius: 12px;
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 550;
+    cursor: pointer;
+  }
+  .tabbar .ti { font-size: 21px; line-height: 1.1; filter: grayscale(1) opacity(.7); }
+  .tabbar button[aria-current='page'] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .tabbar button[aria-current='page'] .ti { filter: none; }
+  .tab-badge {
+    position: absolute;
+    top: 2px;
+    left: calc(50% + 6px);
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 99px;
+    background: var(--bad);
+    color: #fff;
+    font-size: 11px;
+    line-height: 18px;
+    font-weight: 700;
+  }
+
+  /* Kopfzeile kompakt */
+  .topbar { margin-bottom: 12px; gap: 8px; }
+  .topbar h1 { font-size: 22px; }
+  .topbar p { font-size: 13px; }
+  .clock { display: none; }
+  .topbar-right { gap: 8px; }
+  .icon-btn { width: 42px; height: 42px; }
+
+  /* Übersicht: zwei Spalten, antippbar */
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .stat { padding: 10px 12px; cursor: pointer; }
+  .stat .value { font-size: 21px; }
+  .stat:active { transform: scale(.98); }
+
+  .columns, .col { gap: 12px; }
+  .card-head { padding: 12px 14px 10px; }
+  .card-head h2 { font-size: 16.5px; }
+  .card-body { padding: 10px 14px 14px; max-height: none; }
+
+  /* Größere Touch-Ziele, kein Zoom beim Tippen in Felder */
+  .btn { min-height: 42px; padding: 9px 14px; }
+  input, select, textarea { font-size: 16px; min-height: 44px; }
+  input[type='checkbox'] { min-height: 0; }
+  .task input[type='checkbox'] { width: 22px; height: 22px; }
+  .task { padding: 11px 2px; }
+  .mail { padding: 11px 2px; }
+  .mail-actions button, .ex-actions button, .package .p-actions button { min-height: 34px; min-width: 38px; padding: 4px 10px; font-size: 13.5px; }
+  .ex-actions { flex-direction: column; }
+  .task-form { padding: 10px 14px 0; }
+
+  /* Dialoge als Bottom-Sheet */
+  dialog {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    max-height: 92vh;
+    border-radius: 18px 18px 0 0;
+    border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  dialog[open] { animation: sheet-up .22s ease-out; }
+  .dialog-form { padding: 18px 16px; }
+  .dialog-actions { position: sticky; bottom: 0; background: var(--card); padding-top: 8px; }
+  .dialog-actions .btn { flex: 1; }
+
+  .footer { display: none; }
+
+  /* Pakete: eine Spalte, Knöpfe unter den Infos */
+  .package-list { grid-template-columns: 1fr; }
+  .package { grid-template-columns: minmax(0, 1fr); }
+  .package .p-actions { order: 5; margin-top: 4px; }
+}
+@keyframes sheet-up { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
