@@ -2,12 +2,13 @@
 
 Persönliches Dashboard mit allen wichtigen Infos auf einen Blick:
 
-- **🌤 Wetter**: aktuell, die nächsten 12 Stunden, 6-Tage-Vorschau und Regenhinweis („Regen ab ca. 17 Uhr, Schirm mitnehmen“)
-- **📅 Anstehende Termine**: aus Samsung Kalender bzw. Google, Outlook oder iCloud über iCal-Link oder `.ics`-Datei
+- **🌤 Wetter** für Wiesbaden (änderbar): aktuell, die nächsten 12 Stunden, 6-Tage-Vorschau und Regenhinweis („Regen ab ca. 17 Uhr, Schirm mitnehmen“)
+- **💶 Auto-Kosten**: Tanken und alle anderen Ausgaben eintragen, mit Monatsdiagramm, Kosten nach Art, Verbrauch, Kosten pro km, Spritpreis und CSV-Export
+- **✉️ Offene Mails** aus dem GMX-Postfach: ungelesene und markierte Mails, direkt als gelesen oder erledigt markierbar
 - **✅ Aufgaben**: direkt aus **Todoist** (abhaken und neu anlegen inklusive) oder lokal im Dashboard
-- **📦 Pakete**: erscheinen **nur, wenn ein Paket erwartet wird**, und verschwinden nach der Zustellung wieder
-- **🚗 Auto-Status**: Kilometerstand, Tank, Reichweite, HU/TÜV, Inspektion (Datum oder km), Reifenwechsel, Notizen
-- **Übersichtsleiste** mit Wetter, Terminen heute, fälligen Aufgaben, Paketen und Auto-Hinweisen
+- **📦 Pakete**: erscheinen **nur, wenn ein Paket erwartet wird**. Sie werden automatisch aus Versandmails erkannt und verschwinden nach der Zustellung wieder
+- **🚗 Auto-Status**: Kilometerstand, Tank, HU/TÜV, Inspektion (Datum oder km), Reifenwechsel, Notizen
+- **Übersichtsleiste** mit Wetter, Mails, fälligen Aufgaben, Paketen, Auto-Hinweisen und Autokosten des Monats
 
 Die Oberfläche ist auf Deutsch, passt sich an Handy und Tablet an und folgt dem hellen oder dunklen Modus des Geräts.
 
@@ -20,7 +21,7 @@ npm install
 npm start
 ```
 
-Danach im Browser **http://localhost:3000** öffnen. Wetter-Ort, Todoist und DHL richtest du über **⚙ Einstellungen** ein.
+Danach im Browser **http://localhost:3000** öffnen. GMX, Todoist und optional DHL richtest du über **⚙ Einstellungen** ein.
 
 | Variable             | Standard        | Bedeutung                                                                          |
 | -------------------- | --------------- | ---------------------------------------------------------------------------------- |
@@ -29,7 +30,9 @@ Danach im Browser **http://localhost:3000** öffnen. Wetter-Ort, Todoist und DHL
 | `DASHBOARD_PASSWORD` | –               | Wenn gesetzt, fragt der Browser beim Öffnen nach dem Passwort (Benutzername egal)  |
 | `TODOIST_TOKEN`      | –               | Todoist-API-Token (alternativ in den Einstellungen eintragen)                      |
 | `DHL_API_KEY`        | –               | DHL-API-Schlüssel für automatischen Paketstatus (optional)                         |
-| `DATA_DIR`           | `./data`        | Speicherort der Daten (`db.json` und hochgeladene Kalender)                         |
+| `MAIL_USER`, `MAIL_PASSWORD` | –       | GMX-Zugang (alternativ in den Einstellungen eintragen)                             |
+| `MAIL_IMAP_HOST`     | automatisch     | Anderer IMAP-Server (Standard für GMX: `imap.gmx.net`)                             |
+| `DATA_DIR`           | `./data`        | Speicherort der Daten (`db.json`)                                                  |
 | `TZ`                 | `Europe/Berlin` | Zeitzone für Termine und Wetter                                                    |
 
 Beispiel für den Zugriff im Heimnetz:
@@ -38,11 +41,33 @@ Beispiel für den Zugriff im Heimnetz:
 HOST=0.0.0.0 DASHBOARD_PASSWORD=geheim npm start
 ```
 
-Alle Daten liegen lokal in `data/`. Der Ordner ist absichtlich von Git ausgeschlossen, weil er private Kalender-Links und Zugangsdaten enthält. Die Datei ist nur für den eigenen Benutzer lesbar. Tokens und Kalender-Links werden nie an den Browser zurückgegeben.
+Alle Daten liegen lokal in `data/`. Der Ordner ist absichtlich von Git ausgeschlossen, weil er Zugangsdaten enthält. Die Datei ist nur für den eigenen Benutzer lesbar. Passwörter und Tokens werden nie an den Browser zurückgegeben.
 
 ## Wetter
 
-Die Daten kommen von [Open-Meteo](https://open-meteo.com), kostenlos und ohne Anmeldung. In den Einstellungen den Ort suchen oder „📍 Aktuellen Standort verwenden“ wählen. Der Standort funktioniert nur über `localhost` oder `https`.
+Die Daten kommen von [Open-Meteo](https://open-meteo.com), kostenlos und ohne Anmeldung. Voreingestellt ist **Wiesbaden**. In den Einstellungen kannst du einen anderen Ort suchen oder „📍 Aktuellen Standort verwenden“ wählen. Der Standort funktioniert nur über `localhost` oder `https`.
+
+## Auto-Kosten
+
+Mit **⛽ Tanken** bzw. **+ Ausgabe** trägst du Kosten ein: Tanken, Inspektion, Reparatur, Reifen, Versicherung, Kfz-Steuer, HU/TÜV, Parken/Maut, Pflege und Sonstiges. Beim Tanken gibst du Betrag, Liter und Kilometerstand an, der Literpreis wird mitgerechnet.
+
+Die Kachel zeigt für die letzten 12 Monate, das laufende Jahr oder gesamt:
+
+- Kosten diesen Monat und im Zeitraum
+- **Kosten pro km**: alle Kosten geteilt durch die gefahrenen km. Dafür braucht es Einträge mit Kilometerstand.
+- **Ø Verbrauch** in l/100 km nach der Volltank-Methode. Dafür sind mindestens zwei Volltankungen mit Kilometerstand nötig; Teilbetankungen dazwischen werden mitgezählt.
+- Letzter und durchschnittlicher **Spritpreis**
+- **Monatsdiagramm** (Tanken und sonstige Kosten), Aufteilung nach Art und die letzten Einträge zum Bearbeiten
+- **CSV-Export** für Excel
+
+Ein eingetragener Kilometerstand wird automatisch in den Auto-Status übernommen.
+
+## E-Mail (GMX)
+
+1. In GMX einmalig den Zugriff erlauben: **E-Mail → Einstellungen → POP3/IMAP Abruf → „E-Mails über externe Programme senden und empfangen“** aktivieren.
+2. Im Dashboard: **⚙ → E-Mail (GMX)** → Adresse und Passwort eingeben → Verbinden. Die Anmeldung wird dabei direkt geprüft. Bei Zwei-Faktor-Anmeldung ein App-Passwort von GMX verwenden.
+
+Danach zeigt die Mail-Kachel alle **ungelesenen** und **markierten (⭐)** Mails im Posteingang. Mit „✓ Gelesen“ bzw. „Erledigt“ änderst du das direkt im Postfach; die Mail verschwindet dann aus der Liste. Das Dashboard liest nur und markiert, es löscht und verschickt nichts.
 
 ## Todoist
 
@@ -60,7 +85,13 @@ Ohne Todoist werden Aufgaben lokal im Dashboard gespeichert.
 
 ## Pakete
 
-Die Paket-Kachel ist normalerweise **unsichtbar**. Erwartest du ein Paket, legst du es über 📦 in der Kopfzeile an: Bezeichnung, Sendungsnummer (optional), erwarteter Tag. Danach:
+Die Paket-Kachel ist normalerweise **unsichtbar**.
+
+**Automatisch aus Versandmails:** Ist GMX verbunden, prüft das Dashboard alle 10 Minuten die Mails der letzten 14 Tage auf Versandbestätigungen von DHL, Hermes, DPD, GLS, UPS und Amazon. Daraus übernimmt es Sendungsnummer, Paketdienst und erwarteten Liefertag und legt das Paket an. Eine spätere „Zugestellt“-Mail schließt es ab. Newsletter werden ignoriert. Jede Mail wird nur einmal ausgewertet, ein gelöschtes Paket kommt also nicht wieder.
+
+**Von Hand:** Über 📦 in der Kopfzeile: Bezeichnung, Sendungsnummer (optional), erwarteter Tag.
+
+Sobald ein Paket unterwegs ist:
 
 - erscheint die Kachel mit Status, erwartetem Tag und einem Link zur Sendungsverfolgung (DHL, Hermes, DPD, GLS, UPS, Amazon). Der Paketdienst wird anhand der Nummer vorgeschlagen.
 - erscheint in der Übersichtsleiste ein Hinweis, z. B. „1 kommt heute“.
@@ -68,29 +99,19 @@ Die Paket-Kachel ist normalerweise **unsichtbar**. Erwartest du ein Paket, legst
 
 **Automatischer DHL-Status (optional):** Mit einem kostenlosen Schlüssel von [developer.dhl.com](https://developer.dhl.com) (Konto anlegen → App erstellen → API „Shipment Tracking – Unified“) holt das Dashboard den Status von DHL-Paketen selbst ab, z. B. „In Zustellung“ oder „Zugestellt“. Zugestellte Pakete werden dann automatisch ausgeblendet.
 
-## Samsung Kalender verbinden
-
-Samsung bietet für den Kalender **keine öffentliche Schnittstelle** an. Termine, die nur auf dem Handy liegen (Kalender „Mein Handy“ bzw. „Samsung-Konto“), kann das Dashboard nicht direkt lesen. So geht es:
-
-1. **Termine ins Google-Konto legen** (empfohlen): In Samsung Kalender unter ⚙ Einstellungen den *Standardkalender* auf dein Google-Konto stellen. Dann landen neue Termine automatisch bei Google. Bestehende Termine überträgst du, indem du beim Bearbeiten als Kalender „Google“ wählst. Je nach Samsung-Version gibt es dafür unter *Kalender verwalten* auch eine Funktion zum Verschieben. Die Samsung-App nutzt du weiter wie gewohnt.
-2. **Link holen:** Am PC [calendar.google.com](https://calendar.google.com) → ⚙ *Einstellungen* → links den Kalender wählen → *Kalender integrieren* → **„Privatadresse im iCal-Format“** kopieren. Im Dashboard unter *Kalender* → *iCal-Link hinzufügen* einfügen. Ab dann aktualisiert sich alles automatisch alle 5 Minuten.
-3. **Ohne Google:** Termine als `.ics` exportieren, z. B. mit einer Export-App, und hochladen. Mit „Datei ersetzen“ spielst du später einen neuen Export ein.
-
-Wiederkehrende Termine, Ausnahmen, verschobene Einzeltermine und die Zeitumstellung werden berücksichtigt.
-
 ## Auto
 
-Ältere Modelle wie der Ford Focus haben kein Online-Modem und damit keine Schnittstelle (FordPass Connect gibt es erst bei neueren Modellen). Die Werte trägst du über **Bearbeiten** ein, z. B. nach dem Tanken oder der Werkstatt. Das Dashboard warnt 30 Tage vor HU/TÜV, Inspektion und Reifenwechsel, 1.000 km vor dem Inspektions-Kilometerstand und bei einem Tank unter 20 %.
+Ältere Modelle wie der Ford Focus haben kein Online-Modem und damit keine Schnittstelle (FordPass Connect gibt es erst bei neueren Modellen). Die Werte trägst du über **Bearbeiten** ein; der Kilometerstand kommt automatisch aus den Tankeinträgen. Das Dashboard warnt 30 Tage vor HU/TÜV, Inspektion und Reifenwechsel, 1.000 km vor dem Inspektions-Kilometerstand und bei einem Tank unter 20 %.
 
 ## Aufbau
 
 ```
 server.js          Express-Server und REST-API
 lib/store.js       Speicherung in data/db.json
-lib/calendar.js    iCal abrufen/parsen, Wiederholungen auflösen
 lib/weather.js     Open-Meteo (Vorhersage, Ortssuche)
 lib/todoist.js     Todoist API v1
 lib/packages.js    Paketdienste, Tracking-Links, DHL-Status
+lib/mail.js        IMAP (GMX): offene Mails, Versandmails erkennen
 public/            Oberfläche (HTML/CSS/JS, kein Build-Schritt)
 ```
 
@@ -98,14 +119,16 @@ public/            Oberfläche (HTML/CSS/JS, kein Build-Schritt)
 
 | Methode            | Pfad                                         | Zweck                                         |
 | ------------------ | -------------------------------------------- | --------------------------------------------- |
-| GET                | `/api/state`                                 | Auto, Kalenderliste, Einstellungen (ohne Geheimnisse) |
+| GET                | `/api/state`                                 | Auto, Einstellungen (ohne Geheimnisse)        |
 | PUT                | `/api/car`                                   | Auto-Status speichern                         |
 | GET/POST           | `/api/tasks`                                 | Aufgaben (Todoist oder lokal) lesen/anlegen   |
 | PATCH/DELETE       | `/api/tasks/:id`                             | Abhaken (`{ "done": true }`) / löschen (lokal) |
-| POST               | `/api/calendars`                             | Kalender hinzufügen (`url` oder `ics`)        |
-| PATCH/DELETE       | `/api/calendars/:id`                         | Name/Farbe/aktiv/Datei ändern, entfernen      |
-| GET                | `/api/events?days=14`                        | Termine der nächsten n Tage                   |
+| GET/POST           | `/api/expenses`                              | Auto-Ausgaben lesen / eintragen               |
+| PATCH/DELETE       | `/api/expenses/:id`                          | Ausgabe ändern / löschen                      |
+| GET                | `/api/expenses.csv`                          | CSV-Export                                    |
+| GET                | `/api/mail`                                  | Ungelesene und markierte Mails                |
+| PATCH              | `/api/mail/:uid`                             | `{ "seen": true }` / `{ "flagged": false }`   |
 | GET                | `/api/weather`, `/api/weather/search?q=`     | Vorhersage, Ortssuche                         |
 | GET/POST           | `/api/packages`                              | Sichtbare Pakete lesen / Paket anlegen        |
 | PATCH/DELETE       | `/api/packages/:id`                          | Paket ändern / entfernen                      |
-| PUT                | `/api/settings/weather`, `…/todoist`, `…/dhl` | Einstellungen speichern (`DELETE …/todoist` trennt) |
+| PUT                | `/api/settings/weather`, `…/todoist`, `…/dhl`, `…/mail` | Einstellungen speichern (`DELETE …/todoist` bzw. `…/mail` trennt) |

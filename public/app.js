@@ -3,13 +3,13 @@
 const REFRESH_MS = 5 * 60 * 1000;
 const state = {
   car: {},
-  calendars: [],
-  settings: { weather: null, todoist: {}, dhl: {} },
+  settings: { weather: null, todoist: {}, dhl: {}, mail: {} },
+  expenses: [],
+  expenseCategories: {},
+  mail: null,
   tasks: [],
   taskSource: 'local',
   taskError: '',
-  events: [],
-  eventErrors: [],
   weather: null,
   packages: [],
   packageErrors: [],
@@ -570,205 +570,434 @@ $('#packages').addEventListener('click', async (e) => {
   }
 });
 
-// ---------- Termine ----------
-function eventDayKey(ev) {
-  const key = ev.allDay ? ev.start : dayKey(new Date(ev.start));
-  // Laufende Termine, die vor heute begonnen haben, unter "Heute" einsortieren.
-  return key < todayKey() ? todayKey() : key;
-}
+// ---------- Auto-Kosten ----------
+const CATEGORY_ICONS = {
+  fuel: '⛽',
+  service: '🔧',
+  repair: '🛠',
+  tires: '🛞',
+  insurance: '🛡',
+  tax: '🏛',
+  inspection: '✅',
+  parking: '🅿️',
+  care: '🧽',
+  other: '📎',
+};
+const fmtEur = (n, digits = 2) =>
+  n == null || !Number.isFinite(n) ? '–' : n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: digits, maximumFractionDigits: digits });
+const fmtDec = (n, digits = 1) => (n == null || !Number.isFinite(n) ? '–' : n.toLocaleString('de-DE', { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+const monthKey = (dateStr) => dateStr.slice(0, 7);
 
-function renderEvents() {
-  const el = $('#events');
-  const errors = state.eventErrors
-    .map((e) => `<div class="error-box">⚠ „${esc(e.calendarName)}“ konnte nicht geladen werden: ${esc(e.message)}</div>`)
-    .join('');
-
-  if (!state.calendars.length) {
-    el.innerHTML = `<div class="empty">Noch kein Kalender verbunden.<br/><button class="btn" data-open="calendar-dialog">Samsung / Google Kalender verbinden</button></div>`;
-    return;
-  }
-  if (!state.events.length) {
-    el.innerHTML = `${errors}<div class="empty">Keine Termine im gewählten Zeitraum.</div>`;
-    return;
-  }
-
-  const groups = new Map();
-  for (const ev of state.events) {
-    const key = eventDayKey(ev);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(ev);
-  }
-
+function costRangeStart(range) {
   const now = new Date();
-  el.innerHTML =
-    errors +
-    [...groups]
-      .map(([key, evs]) => {
-        const items = evs
-          .map((ev) => {
-            let time = 'ganztägig';
-            let cls = '';
-            let extra = '';
-            if (ev.allDay) {
-              // Ende ist bei ganztägigen Terminen exklusiv.
-              if (ev.end) {
-                const last = parseDay(ev.end);
-                last.setDate(last.getDate() - 1);
-                if (dayKey(last) > ev.start) extra = `bis ${last.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`;
-              }
-            } else {
-              const s = new Date(ev.start);
-              const en = ev.end ? new Date(ev.end) : null;
-              time = en ? `${fmtTime(s)} – ${fmtTime(en)}` : fmtTime(s);
-              if (en && dayKey(en) !== dayKey(s)) extra = `bis ${en.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} ${fmtTime(en)}`;
-              if (en && en < now) cls = 'past';
-              else if (s <= now && (!en || en > now)) cls = 'now';
-            }
-            const meta = [extra, ev.location, state.calendars.length > 1 ? ev.calendarName : ''].filter(Boolean).map(esc).join(' · ');
-            return `
-              <div class="event ${cls}" style="--c:${esc(ev.color)}" title="${esc(ev.description)}">
-                <div class="time">${time}</div>
-                <div>
-                  <div class="title">${esc(ev.title)} ${cls === 'now' ? '<span class="badge accent">läuft</span>' : ''}</div>
-                  ${meta ? `<div class="meta">${meta}</div>` : ''}
-                </div>
-              </div>`;
-          })
-          .join('');
-        const diff = daysUntil(key);
-        return `
-          <section class="day">
-            <div class="day-head">
-              <span>${relativeDay(key)}</span>
-              <span class="badge">${fmtDate(key, { day: 'numeric', month: 'long' })}</span>
-              ${diff <= 1 ? `<span class="badge accent">${evs.length} Termin${evs.length === 1 ? '' : 'e'}</span>` : ''}
-            </div>
-            ${items}
-          </section>`;
-      })
-      .join('');
+  if (range === 'year') return `${now.getFullYear()}-01-01`;
+  if (range === '12m') return dayKey(new Date(now.getFullYear(), now.getMonth() - 11, 1));
+  return '0000-01-01';
 }
 
-async function loadEvents(refresh = false) {
-  if (!state.calendars.length) {
-    state.events = [];
-    state.eventErrors = [];
+/** Durchschnittsverbrauch nach der Volltank-Methode (von Volltanken zu Volltanken). */
+function fuelConsumption(expenses) {
+  const fuel = expenses
+    .filter((e) => e.category === 'fuel' && e.mileageKm != null && e.liters)
+    .sort((a, b) => a.mileageKm - b.mileageKm || a.date.localeCompare(b.date));
+  let liters = 0;
+  let km = 0;
+  let lastFull = null;
+  let pending = 0;
+  for (const e of fuel) {
+    if (lastFull) pending += e.liters;
+    if (e.fullTank) {
+      if (lastFull && e.mileageKm > lastFull.mileageKm) {
+        liters += pending;
+        km += e.mileageKm - lastFull.mileageKm;
+      }
+      lastFull = e;
+      pending = 0;
+    }
+  }
+  return km > 0 ? (liters / km) * 100 : null;
+}
+
+function costStats(expenses, range) {
+  const start = costRangeStart(range);
+  const inRange = expenses.filter((e) => e.date >= start);
+  const total = inRange.reduce((s, e) => s + e.amount, 0);
+  const thisMonth = expenses.filter((e) => monthKey(e.date) === monthKey(todayKey())).reduce((s, e) => s + e.amount, 0);
+
+  // Gefahrene km im Zeitraum: höchster Stand im Zeitraum minus letzter Stand davor (bzw. niedrigster im Zeitraum).
+  const kmIn = inRange.filter((e) => e.mileageKm != null).map((e) => e.mileageKm);
+  const kmBefore = expenses.filter((e) => e.date < start && e.mileageKm != null).map((e) => e.mileageKm);
+  const baseKm = kmBefore.length ? Math.max(...kmBefore) : kmIn.length ? Math.min(...kmIn) : null;
+  const kmDriven = kmIn.length && baseKm != null ? Math.max(...kmIn) - baseKm : null;
+
+  const fuelIn = inRange.filter((e) => e.category === 'fuel' && e.liters);
+  const fuelLiters = fuelIn.reduce((s, e) => s + e.liters, 0);
+  const avgPrice = fuelLiters ? fuelIn.reduce((s, e) => s + e.amount, 0) / fuelLiters : null;
+  const lastFuel = expenses.filter((e) => e.category === 'fuel' && e.liters).sort((a, b) => b.date.localeCompare(a.date))[0];
+
+  const byCategory = {};
+  for (const e of inRange) byCategory[e.category] = (byCategory[e.category] || 0) + e.amount;
+
+  return {
+    total,
+    thisMonth,
+    kmDriven: kmDriven > 0 ? kmDriven : null,
+    perKm: kmDriven > 0 ? total / kmDriven : null,
+    consumption: fuelConsumption(inRange) ?? fuelConsumption(expenses), // Zeitraum, sonst gesamt
+    avgPrice,
+    lastPrice: lastFuel ? lastFuel.amount / lastFuel.liters : null,
+    byCategory: Object.entries(byCategory).sort((a, b) => b[1] - a[1]),
+    count: inRange.length,
+  };
+}
+
+/** Monatswerte (letzte 12 Monate), getrennt nach Tanken und sonstigen Kosten. */
+function monthlySeries(expenses) {
+  const now = new Date();
+  const months = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`, date: d, fuel: 0, other: 0 });
+  }
+  const idx = new Map(months.map((m) => [m.key, m]));
+  for (const e of expenses) {
+    const m = idx.get(monthKey(e.date));
+    if (m) m[e.category === 'fuel' ? 'fuel' : 'other'] += e.amount;
+  }
+  return months;
+}
+
+/** "Schöne" Skala für die y-Achse. */
+function niceMax(v) {
+  if (v <= 0) return 100;
+  const p = 10 ** Math.floor(Math.log10(v));
+  for (const f of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (f * p >= v) return f * p;
+  return 10 * p;
+}
+
+function renderCostChart(months) {
+  const max = niceMax(Math.max(...months.map((m) => m.fuel + m.other)));
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => max * f);
+  const bars = months
+    .map((m) => {
+      const total = m.fuel + m.other;
+      const label = m.date.toLocaleDateString('de-DE', { month: 'short', year: '2-digit' });
+      const tip = `${m.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}&#10;Tanken: ${fmtEur(m.fuel)}&#10;Sonstiges: ${fmtEur(m.other)}&#10;Summe: ${fmtEur(total)}`;
+      return `
+        <div class="cc-col" tabindex="0" data-tip="${tip}" aria-label="${tip.replace(/&#10;/g, ', ')}">
+          <div class="cc-stack" style="height:${(total / max) * 100}%">
+            ${m.other ? `<div class="cc-seg cc-other" style="flex:${m.other}"></div>` : ''}
+            ${m.fuel ? `<div class="cc-seg cc-fuel" style="flex:${m.fuel}"></div>` : ''}
+          </div>
+          <div class="cc-x">${label.replace(' ', '<br/>')}</div>
+        </div>`;
+    })
+    .join('');
+  return `
+    <div class="cc" role="img" aria-label="Monatliche Autokosten der letzten 12 Monate">
+      <div class="cc-legend">
+        <span><i class="sw cc-fuel"></i>Tanken</span>
+        <span><i class="sw cc-other"></i>Sonstige Kosten</span>
+      </div>
+      <div class="cc-plot">
+        <div class="cc-grid">${ticks
+          .map((t) => `<div class="cc-tick" style="bottom:${(t / max) * 100}%"><span>${fmtEur(t, 0)}</span></div>`)
+          .join('')}</div>
+        <div class="cc-bars">${bars}</div>
+      </div>
+      <div class="cc-tooltip" hidden></div>
+    </div>`;
+}
+
+let showAllExpenses = false;
+
+function renderCosts() {
+  const el = $('#costs');
+  const car = state.car || {};
+  $('#costs-title').textContent = `💶 Kosten · ${car.name || car.model || 'Auto'}`;
+  const expenses = state.expenses;
+  if (!expenses.length) {
+    el.innerHTML = `<div class="empty">Noch keine Ausgaben eingetragen.<br/>Trag nach dem Tanken Betrag, Liter und Kilometerstand ein: Dann siehst du hier Verbrauch, Kosten pro km und eine Monatsübersicht.<br/><button class="btn" data-open="expense-dialog" data-category="fuel">⛽ Erste Tankfüllung eintragen</button></div>`;
     return;
   }
-  const days = $('#event-range').value;
-  const data = await api(`/api/events?days=${days}${refresh ? '&refresh=1' : ''}`);
-  state.events = data.events;
-  state.eventErrors = data.errors;
+  const range = $('#cost-range').value;
+  const rangeLabel = { '12m': 'letzte 12 Monate', year: `Jahr ${new Date().getFullYear()}`, all: 'gesamt' }[range];
+  const s = costStats(expenses, range);
+  const maxCat = s.byCategory[0]?.[1] || 1;
+  const list = showAllExpenses ? expenses : expenses.slice(0, 6);
+
+  el.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="label">Diesen Monat</div><div class="value">${fmtEur(s.thisMonth)}</div></div>
+      <div class="kpi"><div class="label">Summe</div><div class="value">${fmtEur(s.total)}</div><div class="hint">${rangeLabel}${s.kmDriven ? ` · ${fmtNum(s.kmDriven)} km` : ''}</div></div>
+      <div class="kpi"><div class="label">Kosten pro km</div><div class="value">${s.perKm != null ? fmtEur(s.perKm) : '–'}</div><div class="hint">${s.perKm != null ? 'alle Kosten / gefahrene km' : 'braucht km-Stände'}</div></div>
+      <div class="kpi"><div class="label">Ø Verbrauch</div><div class="value">${s.consumption != null ? `${fmtDec(s.consumption)} l` : '–'}</div><div class="hint">${s.consumption != null ? 'pro 100 km' : 'braucht 2× Volltanken mit km'}</div></div>
+      <div class="kpi"><div class="label">Spritpreis</div><div class="value">${s.lastPrice != null ? `${fmtDec(s.lastPrice, 3)} €` : '–'}</div><div class="hint">${s.avgPrice != null ? `zuletzt · Ø ${fmtDec(s.avgPrice, 3)} €/l` : 'pro Liter'}</div></div>
+    </div>
+
+    ${renderCostChart(monthlySeries(expenses))}
+
+    <div class="cost-split">
+      <section>
+        <h4>Nach Art (${rangeLabel})</h4>
+        <ul class="cat-bars">
+          ${s.byCategory
+            .map(
+              ([cat, sum]) => `
+            <li>
+              <span class="cat-name">${CATEGORY_ICONS[cat] || ''} ${esc(state.expenseCategories[cat] || cat)}</span>
+              <span class="cat-bar"><span style="width:${(sum / maxCat) * 100}%"></span></span>
+              <span class="cat-val">${fmtEur(sum, 0)}</span>
+            </li>`,
+            )
+            .join('') || '<li class="muted small">Keine Ausgaben in diesem Zeitraum.</li>'}
+        </ul>
+      </section>
+      <section>
+        <h4>Letzte Einträge</h4>
+        <ul class="expense-list">
+          ${list
+            .map((e) => {
+              const details = [
+                e.liters ? `${fmtDec(e.liters, 2)} l à ${fmtDec(e.amount / e.liters, 3)} €` : '',
+                e.mileageKm != null ? `${fmtNum(e.mileageKm)} km` : '',
+                e.category === 'fuel' && e.liters && !e.fullTank ? 'nicht voll' : '',
+                e.station,
+                e.note,
+              ]
+                .filter(Boolean)
+                .map(esc)
+                .join(' · ');
+              return `
+              <li data-id="${esc(e.id)}">
+                <span class="ex-icon" title="${esc(state.expenseCategories[e.category])}">${CATEGORY_ICONS[e.category] || '📎'}</span>
+                <div class="ex-main">
+                  <div><strong>${esc(state.expenseCategories[e.category])}</strong> <span class="muted small">${fmtDate(e.date)}</span></div>
+                  ${details ? `<div class="muted small">${details}</div>` : ''}
+                </div>
+                <span class="ex-amount">${fmtEur(e.amount)}</span>
+                <span class="ex-actions">
+                  <button data-action="edit" title="Bearbeiten" aria-label="Bearbeiten">✎</button>
+                  <button data-action="delete" title="Löschen" aria-label="Löschen">✕</button>
+                </span>
+              </li>`;
+            })
+            .join('')}
+        </ul>
+        <div class="row ex-footer">
+          ${expenses.length > 6 ? `<button class="btn btn-ghost" data-action="toggle-all">${showAllExpenses ? 'Weniger anzeigen' : `Alle ${expenses.length} anzeigen`}</button>` : ''}
+          <a class="btn btn-ghost" href="/api/expenses.csv" download>CSV exportieren</a>
+        </div>
+      </section>
+    </div>
+  `;
 }
 
-$('#event-range').addEventListener('change', async () => {
-  await loadEvents().catch((err) => toast(err.message, true));
-  renderEvents();
-  renderSummary();
+async function loadExpenses() {
+  const data = await api('/api/expenses');
+  state.expenses = data.expenses;
+  state.expenseCategories = data.categories;
+}
+
+$('#cost-range').addEventListener('change', renderCosts);
+
+// Tooltip für das Monatsdiagramm (Maus und Tastatur)
+function showCostTip(col) {
+  const chart = col.closest('.cc');
+  const tip = chart.querySelector('.cc-tooltip');
+  tip.innerHTML = col.dataset.tip
+    .split('\n')
+    .map((line, i) => (i === 0 ? `<strong>${esc(line)}</strong>` : esc(line)))
+    .join('<br/>');
+  tip.hidden = false;
+  const c = chart.getBoundingClientRect();
+  const r = col.getBoundingClientRect();
+  const left = Math.min(Math.max(r.left - c.left + r.width / 2, 70), c.width - 70);
+  tip.style.left = `${left}px`;
+  chart.querySelectorAll('.cc-col.active').forEach((x) => x.classList.remove('active'));
+  col.classList.add('active');
+}
+function hideCostTip(chart) {
+  chart.querySelector('.cc-tooltip').hidden = true;
+  chart.querySelectorAll('.cc-col.active').forEach((x) => x.classList.remove('active'));
+}
+$('#costs').addEventListener('mouseover', (e) => {
+  const col = e.target.closest('.cc-col');
+  const chart = e.target.closest('.cc');
+  if (col) showCostTip(col);
+  else if (chart) hideCostTip(chart);
+});
+$('#costs').addEventListener('focusin', (e) => {
+  const col = e.target.closest('.cc-col');
+  if (col) showCostTip(col);
+});
+$('#costs').addEventListener('mouseleave', () => {
+  const chart = $('#costs .cc');
+  if (chart) hideCostTip(chart);
+});
+$('#costs').addEventListener('focusout', (e) => {
+  const chart = e.target.closest('.cc');
+  if (chart) hideCostTip(chart);
 });
 
-// ---------- Kalender verwalten ----------
-function renderCalendarList() {
-  const list = $('#calendar-list');
-  if (!state.calendars.length) {
-    list.innerHTML = '<li class="muted small" style="border:0;display:block;padding:0">Noch keine Kalender verbunden.</li>';
+$('#costs').addEventListener('click', async (e) => {
+  const action = e.target.closest('[data-action]')?.dataset.action;
+  if (!action) return;
+  if (action === 'toggle-all') {
+    showAllExpenses = !showAllExpenses;
+    return renderCosts();
+  }
+  const li = e.target.closest('li[data-id]');
+  const exp = state.expenses.find((x) => x.id === li?.dataset.id);
+  if (!exp) return;
+  if (action === 'edit') return openExpenseDialog(exp);
+  if (action === 'delete') {
+    if (!confirm(`${state.expenseCategories[exp.category]} vom ${fmtDate(exp.date)} über ${fmtEur(exp.amount)} löschen?`)) return;
+    try {
+      await api(`/api/expenses/${exp.id}`, { method: 'DELETE' });
+      state.expenses = state.expenses.filter((x) => x.id !== exp.id);
+      renderCosts();
+      renderSummary();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+});
+
+function updateExpenseForm() {
+  const form = $('#expense-form');
+  const isFuel = form.category.value === 'fuel';
+  form.querySelectorAll('.fuel-only').forEach((el) => (el.hidden = !isFuel));
+  const amount = Number(String(form.amount.value).replace(',', '.'));
+  const liters = Number(String(form.liters.value).replace(',', '.'));
+  $('#expense-preview').textContent = isFuel && amount > 0 && liters > 0 ? `= ${fmtDec(amount / liters, 3)} € pro Liter` : '';
+}
+$('#expense-form').addEventListener('input', updateExpenseForm);
+
+function openExpenseDialog(exp, category = 'fuel') {
+  const form = $('#expense-form');
+  form.reset();
+  $('#expense-dialog-title').textContent = exp ? 'Eintrag bearbeiten' : category === 'fuel' ? '⛽ Tanken eintragen' : 'Ausgabe eintragen';
+  form.id.value = exp?.id || '';
+  form.category.value = exp?.category || category;
+  form.date.value = exp?.date || todayKey();
+  form.amount.value = exp ? String(exp.amount).replace('.', ',') : '';
+  form.mileageKm.value = exp?.mileageKm ?? '';
+  form.mileageKm.placeholder = state.car?.mileageKm != null ? `zuletzt ${fmtNum(state.car.mileageKm)}` : 'optional';
+  form.liters.value = exp?.liters != null ? String(exp.liters).replace('.', ',') : '';
+  form.fullTank.checked = exp ? Boolean(exp.fullTank) : true;
+  form.station.value = exp?.station || '';
+  form.note.value = exp?.note || '';
+  setMsg('#expense-msg', '');
+  updateExpenseForm();
+  $('#expense-dialog').showModal();
+  form.amount.focus();
+}
+
+$('#expense-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const body = Object.fromEntries(new FormData(form));
+  body.fullTank = form.fullTank.checked;
+  const id = body.id;
+  delete body.id;
+  try {
+    const res = id
+      ? await api(`/api/expenses/${id}`, { method: 'PATCH', body })
+      : await api('/api/expenses', { method: 'POST', body });
+    state.car = res.car;
+    await loadExpenses();
+    $('#expense-dialog').close();
+    renderCosts();
+    renderCar();
+    renderSummary();
+    toast(id ? 'Eintrag gespeichert' : `${state.expenseCategories[res.expense.category]} über ${fmtEur(res.expense.amount)} eingetragen`);
+  } catch (err) {
+    setMsg('#expense-msg', err.message, 'error');
+  }
+});
+
+// ---------- Mails ----------
+function fmtMailDate(iso) {
+  const d = new Date(iso);
+  const key = dayKey(d);
+  const diff = daysUntil(key);
+  if (diff === 0) return fmtTime(d);
+  if (diff === -1) return 'gestern';
+  if (diff > -7) return d.toLocaleDateString('de-DE', { weekday: 'short' });
+  return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+}
+
+function renderMail() {
+  const m = state.mail;
+  const list = $('#mail');
+  const count = $('#mail-count');
+  $('#mail-open').hidden = !m?.webmailUrl;
+  if (m?.webmailUrl) $('#mail-open').href = m.webmailUrl;
+  count.hidden = !m?.messages?.length;
+  if (m?.messages) count.textContent = `${m.unreadCount} ungelesen${m.flaggedCount ? ` · ${m.flaggedCount} markiert` : ''}`;
+
+  if (!m || !m.configured) {
+    list.innerHTML = `<li class="empty">Noch kein Postfach verbunden.<br/><button class="btn" data-open="settings-dialog" data-focus="mail-email">GMX verbinden</button></li>`;
     return;
   }
-  list.innerHTML = state.calendars
+  if (m.error) {
+    list.innerHTML = `<li class="error-box">⚠ ${esc(m.error)}</li>`;
+    return;
+  }
+  if (!m.messages.length) {
+    list.innerHTML = '<li class="empty">Posteingang erledigt 🎉 Keine ungelesenen oder markierten Mails.</li>';
+    return;
+  }
+  list.innerHTML = m.messages
     .map(
-      (c) => `
-      <li data-id="${esc(c.id)}">
-        <span class="dot" style="background:${esc(c.color)}"></span>
-        <div>
-          <div>${esc(c.name)}</div>
-          <div class="muted small">${c.type === 'file' ? 'Hochgeladene .ics-Datei · <a href="#" data-action="replace">Datei ersetzen</a>' : `iCal-Link · ${esc(c.urlHint)}`}</div>
+      (x) => `
+      <li class="mail ${x.unread ? 'unread' : ''}" data-uid="${x.uid}">
+        <span class="mail-dot" title="${x.unread ? 'ungelesen' : ''}"></span>
+        <div class="mail-main">
+          <div class="mail-from">${esc(x.from)} ${x.flagged ? '<span class="badge warn" title="Markiert">⭐ markiert</span>' : ''}</div>
+          <div class="mail-subject">${esc(x.subject)}</div>
         </div>
-        <label class="toggle"><input type="checkbox" data-action="toggle" ${c.enabled ? 'checked' : ''}/> aktiv</label>
-        <button class="btn btn-danger" data-action="delete">Entfernen</button>
+        <div class="mail-side">
+          <span class="muted small">${fmtMailDate(x.date)}</span>
+          <span class="mail-actions">
+            ${x.unread ? '<button data-action="seen" title="Als gelesen markieren">✓ Gelesen</button>' : ''}
+            ${x.flagged ? '<button data-action="unflag" title="Markierung entfernen">Erledigt</button>' : ''}
+          </span>
+        </div>
       </li>`,
     )
     .join('');
 }
 
-async function afterCalendarChange(message) {
-  renderCalendarList();
-  setMsg('#calendar-msg', 'Lade Termine …');
-  try {
-    await loadEvents(true);
-    const err = state.eventErrors[0];
-    setMsg('#calendar-msg', err ? `„${err.calendarName}“: ${err.message}` : message, err ? 'error' : 'ok');
-  } catch (e) {
-    setMsg('#calendar-msg', e.message, 'error');
-  }
-  renderEvents();
-  renderSummary();
+async function loadMail(refresh = false) {
+  state.mail = await api(`/api/mail${refresh ? '?refresh=1' : ''}`);
 }
 
-$('#calendar-url-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const form = e.target;
+$('#mail').addEventListener('click', async (e) => {
+  const action = e.target.closest('[data-action]')?.dataset.action;
+  const li = e.target.closest('li[data-uid]');
+  if (!action || !li) return;
+  const uid = Number(li.dataset.uid);
+  const body = action === 'seen' ? { seen: true } : { flagged: false };
   try {
-    const cal = await api('/api/calendars', { method: 'POST', body: Object.fromEntries(new FormData(form)) });
-    state.calendars.push(cal);
-    form.reset();
-    await afterCalendarChange(`„${cal.name}“ verbunden.`);
-  } catch (err) {
-    setMsg('#calendar-msg', err.message, 'error');
-  }
-});
-
-$('#calendar-file-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const file = form.file.files[0];
-  if (!file) return;
-  try {
-    const ics = await file.text();
-    const cal = await api('/api/calendars', { method: 'POST', body: { name: form.name.value, color: form.color.value, ics } });
-    state.calendars.push(cal);
-    form.reset();
-    await afterCalendarChange(`„${cal.name}“ importiert.`);
-  } catch (err) {
-    setMsg('#calendar-msg', err.message, 'error');
-  }
-});
-
-let replaceCalendarId = null;
-$('#calendar-replace-file').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file || !replaceCalendarId) return;
-  try {
-    await api(`/api/calendars/${replaceCalendarId}`, { method: 'PATCH', body: { ics: await file.text() } });
-    await afterCalendarChange('Kalenderdatei ersetzt.');
-  } catch (err) {
-    setMsg('#calendar-msg', err.message, 'error');
-  }
-});
-
-$('#calendar-list').addEventListener('click', async (e) => {
-  const li = e.target.closest('li[data-id]');
-  const action = e.target.dataset.action;
-  if (!li || !action) return;
-  const id = li.dataset.id;
-  try {
-    if (action === 'replace') {
-      e.preventDefault();
-      replaceCalendarId = id;
-      $('#calendar-replace-file').click();
-    } else if (action === 'delete') {
-      const cal = state.calendars.find((c) => c.id === id);
-      if (!confirm(`Kalender „${cal?.name}“ entfernen?`)) return;
-      await api(`/api/calendars/${id}`, { method: 'DELETE' });
-      state.calendars = state.calendars.filter((c) => c.id !== id);
-      await afterCalendarChange('Kalender entfernt.');
-    } else if (action === 'toggle') {
-      const updated = await api(`/api/calendars/${id}`, { method: 'PATCH', body: { enabled: e.target.checked } });
-      state.calendars = state.calendars.map((c) => (c.id === id ? updated : c));
-      await afterCalendarChange('Gespeichert.');
+    e.target.disabled = true;
+    await api(`/api/mail/${uid}`, { method: 'PATCH', body });
+    const msg = state.mail.messages.find((x) => x.uid === uid);
+    if (action === 'seen') {
+      msg.unread = false;
+      state.mail.unreadCount = Math.max(0, state.mail.unreadCount - 1);
+    } else {
+      msg.flagged = false;
+      state.mail.flaggedCount = Math.max(0, state.mail.flaggedCount - 1);
     }
+    // Erledigte Mails (gelesen und nicht markiert) verschwinden aus der Liste.
+    state.mail.messages = state.mail.messages.filter((x) => x.unread || x.flagged);
+    renderMail();
+    renderSummary();
   } catch (err) {
-    setMsg('#calendar-msg', err.message, 'error');
+    e.target.disabled = false;
+    toast(err.message, true);
   }
 });
 
@@ -782,6 +1011,11 @@ function renderSettings() {
   $('#todoist-form').filter.value = s.todoist.filter || '';
   $('#todoist-disconnect').hidden = !s.todoist.connected || s.todoist.fromEnv;
   $('#dhl-status').innerHTML = s.dhl.configured ? '<span class="badge ok">Schlüssel hinterlegt</span>' : '<span class="badge">kein Schlüssel</span>';
+  $('#mail-status').innerHTML = s.mail.configured
+    ? `<span class="badge ok">verbunden</span> <span class="muted">${esc(s.mail.email)} · ${esc(s.mail.host)}${s.mail.fromEnv ? ' (über Umgebungsvariablen)' : ''}</span>`
+    : '<span class="badge">nicht verbunden</span>';
+  $('#mail-form').email.value = s.mail.email || '';
+  $('#mail-disconnect').hidden = !s.mail.configured || s.mail.fromEnv;
 }
 
 async function afterSettingsChange(settings, message) {
@@ -872,24 +1106,32 @@ $('#dhl-form').addEventListener('submit', async (e) => {
   }
 });
 
+$('#mail-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target));
+  setMsg('#settings-msg', 'Melde mich beim Postfach an …');
+  try {
+    const settings = await api('/api/settings/mail', { method: 'PUT', body });
+    e.target.password.value = '';
+    await afterSettingsChange(settings, 'Postfach verbunden ✓');
+  } catch (err) {
+    setMsg('#settings-msg', err.message, 'error');
+  }
+});
+
+$('#mail-disconnect').addEventListener('click', async () => {
+  if (!confirm('Postfach trennen? Zugangsdaten werden gelöscht.')) return;
+  const settings = await api('/api/settings/mail', { method: 'DELETE' });
+  await afterSettingsChange(settings, 'Postfach getrennt.');
+});
+
 // ---------- Übersicht ----------
 function renderSummary() {
   const today = todayKey();
-  const now = new Date();
-  const todays = state.events.filter((e) => eventDayKey(e) === today);
-  const upcoming = state.events.find((e) => (e.allDay ? e.start >= today : new Date(e.start) > now));
   const open = state.tasks.filter((t) => !t.done);
   const overdue = open.filter((t) => t.due && t.due < today);
   const dueToday = open.filter((t) => t.due === today);
   const warnings = carWarnings(state.car || {});
-
-  let nextHint = 'Keine anstehenden Termine';
-  if (upcoming) {
-    const when = upcoming.allDay
-      ? relativeDay(upcoming.start)
-      : `${relativeDay(dayKey(new Date(upcoming.start)))}, ${fmtTime(new Date(upcoming.start))}`;
-    nextHint = `${when}: ${upcoming.title}`;
-  }
 
   const stats = [];
   const w = state.weather;
@@ -900,11 +1142,15 @@ function renderSummary() {
       hint: rainHint(w).wet ? rainHint(w).text : `${wxText(w.current.code)}, ${deg(w.daily[0].min)} / ${deg(w.daily[0].max)}`,
     });
   }
-  stats.push({
-    label: 'Termine heute',
-    value: state.calendars.length ? todays.length : '–',
-    hint: state.calendars.length ? nextHint : 'Kein Kalender verbunden',
-  });
+  const m = state.mail;
+  if (m?.configured) {
+    stats.push({
+      label: 'Mails',
+      value: m.error ? '–' : `✉️ ${m.unreadCount}`,
+      hint: m.error ? 'Postfach nicht erreichbar' : `ungelesen${m.flaggedCount ? ` · ${m.flaggedCount} markiert` : ''}`,
+      cls: m.error ? 'bad' : '',
+    });
+  }
   stats.push({
     label: isTodoist() ? 'Todoist' : 'Offene Aufgaben',
     value: open.length,
@@ -937,6 +1183,17 @@ function renderSummary() {
         : 'Noch nicht eingerichtet',
     cls: warnings.some((w) => w.level === 'bad') ? 'bad' : warnings.length ? 'warn' : '',
   });
+  if (state.expenses.length) {
+    const monthTotal = state.expenses.filter((e) => monthKey(e.date) === monthKey(today)).reduce((sum, e) => sum + e.amount, 0);
+    const lastFuel = state.expenses.find((e) => e.category === 'fuel');
+    stats.push({
+      label: 'Autokosten Monat',
+      value: fmtEur(monthTotal, 0),
+      hint: lastFuel
+        ? `Zuletzt getankt ${daysUntil(lastFuel.date) >= -1 ? relativeDay(lastFuel.date).toLowerCase() : `am ${fmtDate(lastFuel.date, { day: '2-digit', month: '2-digit' })}`}`
+        : 'Noch nicht getankt',
+    });
+  }
 
   $('#summary').innerHTML = stats
     .map(
@@ -959,11 +1216,8 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('dialog[open]').forEach((d) => d.close());
     if (id === 'car-dialog') openCarDialog();
     else if (id === 'package-dialog') openPackageDialog(null);
+    else if (id === 'expense-dialog') openExpenseDialog(null, opener.dataset.category || 'fuel');
     else {
-      if (id === 'calendar-dialog') {
-        renderCalendarList();
-        setMsg('#calendar-msg', '');
-      }
       if (id === 'settings-dialog') {
         renderSettings();
         setMsg('#settings-msg', '');
@@ -983,7 +1237,7 @@ async function loadAll(refresh = false) {
     const s = await api('/api/state');
     Object.assign(state, s);
     // Unabhängige Quellen parallel laden; ein Fehler in einer Quelle blockiert die anderen nicht.
-    const results = await Promise.allSettled([loadEvents(refresh), loadTasks(refresh), loadWeather(refresh), loadPackages(refresh)]);
+    const results = await Promise.allSettled([loadTasks(refresh), loadWeather(refresh), loadPackages(refresh), loadExpenses(), loadMail(refresh)]);
     const failed = results.find((r) => r.status === 'rejected');
     if (failed) toast(`Teilweise nicht geladen: ${failed.reason.message}`, true);
     state.loadedAt = new Date();
@@ -1000,7 +1254,8 @@ function renderAll() {
   renderSummary();
   renderPackages();
   renderWeather();
-  renderEvents();
+  renderCosts();
+  renderMail();
   renderTasks();
   renderCar();
 }
@@ -1010,12 +1265,8 @@ $('#refresh').addEventListener('click', () => loadAll(true));
 tickClock();
 setInterval(tickClock, 1000);
 setInterval(() => {
-  // Ansicht jede Minute neu zeichnen (z. B. "läuft"-Markierung), Daten alle 5 Minuten neu laden.
+  // Daten alle 5 Minuten neu laden.
   if (state.loadedAt && Date.now() - state.loadedAt > REFRESH_MS) loadAll();
-  else {
-    renderSummary();
-    renderEvents();
-  }
 }, 60_000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.loadedAt && Date.now() - state.loadedAt > 60_000) loadAll();

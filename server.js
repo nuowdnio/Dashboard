@@ -3,16 +3,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { load, update, newId } from './lib/store.js';
-import {
-  getEvents,
-  normalizeUrl,
-  saveUploadedIcs,
-  removeCalendarFiles,
-  invalidate,
-} from './lib/calendar.js';
 import { searchPlaces, getForecast, clearWeatherCache } from './lib/weather.js';
 import * as todoist from './lib/todoist.js';
 import { CARRIERS, STATUSES, guessCarrier, trackingUrl, fetchDhlStatus, clearDhlCache } from './lib/packages.js';
+import * as mail from './lib/mail.js';
 
 process.env.TZ ||= 'Europe/Berlin';
 
@@ -23,7 +17,7 @@ const PASSWORD = process.env.DASHBOARD_PASSWORD || '';
 
 const app = express();
 app.disable('x-powered-by');
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({ limit: '1mb' }));
 
 // Optionaler Passwortschutz (HTTP Basic Auth), sobald DASHBOARD_PASSWORD gesetzt ist.
 if (PASSWORD) {
@@ -42,27 +36,23 @@ if (PASSWORD) {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const COLORS = ['#4f8cff', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#ec4899'];
 const PRIORITIES = ['low', 'normal', 'high'];
 
 const str = (v, max = 500) => (v == null ? '' : String(v).trim().slice(0, max));
 const numOrNull = (v) => (v === '' || v == null || Number.isNaN(Number(v)) ? null : Number(v));
 const dateOrEmpty = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '');
 
-// Kalender-URL nur gekürzt an den Browser geben (enthält bei Google einen geheimen Schlüssel).
-function publicCalendar(c) {
-  let urlHint = '';
-  if (c.url) {
-    try {
-      urlHint = new URL(c.url).host;
-    } catch {}
-  }
-  return { id: c.id, name: c.name, color: c.color, type: c.type, enabled: c.enabled !== false, urlHint };
-}
-
 // Zugangsdaten aus Umgebungsvariablen haben Vorrang vor den im Dashboard gespeicherten.
 const todoistToken = (db) => process.env.TODOIST_TOKEN || db.settings.todoist.token;
 const dhlKey = (db) => process.env.DHL_API_KEY || db.settings.dhl.apiKey;
+
+// Mail-Zugang: Umgebungsvariablen MAIL_USER / MAIL_PASSWORD oder Einstellungen im Dashboard.
+function mailConfig(db) {
+  const email = process.env.MAIL_USER || db.settings.mail.email;
+  const password = process.env.MAIL_PASSWORD || db.settings.mail.password;
+  if (!email || !password) return null;
+  return { email, password, host: process.env.MAIL_IMAP_HOST || db.settings.mail.host };
+}
 
 function publicSettings(db) {
   return {
@@ -73,6 +63,12 @@ function publicSettings(db) {
       filter: db.settings.todoist.filter,
     },
     dhl: { configured: Boolean(dhlKey(db)), fromEnv: Boolean(process.env.DHL_API_KEY) },
+    mail: {
+      configured: Boolean(mailConfig(db)),
+      fromEnv: Boolean(process.env.MAIL_USER),
+      email: process.env.MAIL_USER || db.settings.mail.email,
+      host: mailConfig(db) ? mail.imapHost(mailConfig(db)) : '',
+    },
   };
 }
 
@@ -90,7 +86,7 @@ app.get(
   '/api/state',
   wrap(async (req, res) => {
     const db = await load();
-    res.json({ car: db.car, calendars: db.calendars.map(publicCalendar), settings: publicSettings(db) });
+    res.json({ car: db.car, settings: publicSettings(db) });
   }),
 );
 
@@ -211,83 +207,6 @@ app.delete(
       db.tasks = db.tasks.filter((t) => t.id !== req.params.id);
     });
     res.status(204).end();
-  }),
-);
-
-// ---------- Kalender ----------
-app.post(
-  '/api/calendars',
-  wrap(async (req, res) => {
-    const b = req.body || {};
-    const db = await load();
-    const cal = {
-      id: newId(),
-      name: str(b.name, 100) || 'Kalender',
-      color: /^#[0-9a-f]{6}$/i.test(b.color || '') ? b.color : COLORS[db.calendars.length % COLORS.length],
-      enabled: true,
-    };
-
-    if (b.ics) {
-      cal.type = 'file';
-      try {
-        await saveUploadedIcs(cal.id, b.ics);
-      } catch (err) {
-        throw new HttpError(400, err.message);
-      }
-    } else {
-      cal.type = 'url';
-      try {
-        cal.url = normalizeUrl(b.url);
-      } catch (err) {
-        throw new HttpError(400, `Ungültiger Link: ${err.message}`);
-      }
-    }
-
-    await update((d) => d.calendars.push(cal));
-    res.status(201).json(publicCalendar(cal));
-  }),
-);
-
-app.patch(
-  '/api/calendars/:id',
-  wrap(async (req, res) => {
-    const b = req.body || {};
-    const cal = await update(async (db) => {
-      const c = db.calendars.find((x) => x.id === req.params.id);
-      if (!c) throw new HttpError(404, 'Kalender nicht gefunden.');
-      if (b.name !== undefined) c.name = str(b.name, 100) || c.name;
-      if (/^#[0-9a-f]{6}$/i.test(b.color || '')) c.color = b.color;
-      if (b.enabled !== undefined) c.enabled = Boolean(b.enabled);
-      if (b.ics && c.type === 'file') await saveUploadedIcs(c.id, b.ics);
-      invalidate(c.id);
-      return c;
-    });
-    res.json(publicCalendar(cal));
-  }),
-);
-
-app.delete(
-  '/api/calendars/:id',
-  wrap(async (req, res) => {
-    await update((db) => {
-      db.calendars = db.calendars.filter((c) => c.id !== req.params.id);
-    });
-    await removeCalendarFiles(req.params.id);
-    res.status(204).end();
-  }),
-);
-
-app.get(
-  '/api/events',
-  wrap(async (req, res) => {
-    const days = Math.max(1, Math.min(90, Number(req.query.days) || 14));
-    const from = new Date();
-    from.setHours(0, 0, 0, 0);
-    const to = new Date(from);
-    to.setDate(to.getDate() + days);
-    const db = await load();
-    if (req.query.refresh) db.calendars.forEach((c) => invalidate(c.id));
-    res.json(await getEvents(db.calendars, from, to));
   }),
 );
 
@@ -420,12 +339,79 @@ function sanitizePackage(b, existing = {}) {
   return pkg;
 }
 
+const STATUS_RANK = { expected: 0, transit: 1, out_for_delivery: 2, problem: 2, delivered: 3 };
+
+/** Erkannte Versandmail in die Paketliste übernehmen (neu anlegen oder Status fortschreiben). */
+function applyShipment(db, s) {
+  let pkg = s.trackingNumber ? db.packages.find((p) => p.trackingNumber === s.trackingNumber) : null;
+  if (!pkg && !s.trackingNumber && s.status === 'delivered') {
+    // z. B. Amazon "Zugestellt" ohne Sendungsnummer: ältestes offenes Paket desselben Absenders abschließen.
+    pkg = db.packages.find((p) => p.source === 'mail' && !p.trackingNumber && p.carrier === s.carrier && p.status !== 'delivered');
+  }
+  if (pkg) {
+    if (STATUS_RANK[s.status] > (STATUS_RANK[pkg.status] ?? 0)) {
+      pkg.status = s.status;
+      pkg.statusSource = 'mail';
+      if (s.status === 'delivered') pkg.deliveredAt = s.mailDate;
+    }
+    if (s.expected && pkg.status !== 'delivered') pkg.expected = s.expected;
+    return;
+  }
+  if (s.status === 'delivered') return; // schon da – keine Kachel mehr nötig
+  db.packages.push({
+    id: newId(),
+    title: s.title,
+    carrier: s.carrier,
+    trackingNumber: s.trackingNumber,
+    expected: s.expected,
+    customUrl: '',
+    status: s.status,
+    statusText: '',
+    statusSource: 'mail',
+    source: 'mail',
+    deliveredAt: null,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+const MAIL_SCAN_INTERVAL_MS = 10 * 60 * 1000;
+let lastMailScan = 0;
+let mailScanRunning = null;
+
+async function syncMailPackages(force = false) {
+  const db = await load();
+  const cfg = mailConfig(db);
+  if (!cfg) return null;
+  if (mailScanRunning) return mailScanRunning;
+  if (!force && Date.now() - lastMailScan < MAIL_SCAN_INTERVAL_MS) return null;
+  mailScanRunning = (async () => {
+    try {
+      const { shipments, checkedIds } = await mail.scanShipments(cfg, new Set(db.mailProcessed));
+      await update((d) => {
+        shipments.forEach((s) => applyShipment(d, s));
+        d.mailProcessed = [...d.mailProcessed, ...checkedIds].slice(-3000);
+      });
+      return null;
+    } catch (err) {
+      return err.message;
+    } finally {
+      lastMailScan = Date.now();
+      mailScanRunning = null;
+    }
+  })();
+  return mailScanRunning;
+}
+
 app.get(
   '/api/packages',
   wrap(async (req, res) => {
     const db = await load();
     const key = dhlKey(db);
     const errors = [];
+
+    // Versandmails aus dem Postfach auswerten (höchstens alle 10 Minuten).
+    const mailError = await syncMailPackages(Boolean(req.query.refresh));
+    if (mailError) errors.push(`Versandmails: ${mailError}`);
 
     // Bei DHL-Paketen den Status automatisch abfragen, sofern ein API-Schlüssel hinterlegt ist.
     if (key) {
@@ -503,6 +489,218 @@ app.delete(
       db.packages = db.packages.filter((p) => p.id !== req.params.id);
     });
     res.status(204).end();
+  }),
+);
+
+// ---------- Mail ----------
+app.put(
+  '/api/settings/mail',
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const cfg = { email: str(b.email, 200), password: String(b.password || ''), host: str(b.host, 200) };
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.email)) throw new HttpError(400, 'Bitte eine gültige Mailadresse eingeben.');
+    const db0 = await load();
+    if (!cfg.password && db0.settings.mail.email === cfg.email) cfg.password = db0.settings.mail.password; // nur Server geändert
+    if (!cfg.password) throw new HttpError(400, 'Bitte das Passwort eingeben.');
+    try {
+      await mail.verifyLogin(cfg);
+    } catch (err) {
+      throw new HttpError(400, err.message);
+    }
+    const db = await update((d) => {
+      d.settings.mail = cfg;
+      return d;
+    });
+    mail.clearMailCache();
+    lastMailScan = 0;
+    res.json(publicSettings(db));
+  }),
+);
+
+app.delete(
+  '/api/settings/mail',
+  wrap(async (req, res) => {
+    const db = await update((d) => {
+      d.settings.mail = { email: '', password: '', host: '' };
+      return d;
+    });
+    mail.clearMailCache();
+    res.json(publicSettings(db));
+  }),
+);
+
+app.get(
+  '/api/mail',
+  wrap(async (req, res) => {
+    const db = await load();
+    const cfg = mailConfig(db);
+    if (!cfg) return res.json({ configured: false });
+    try {
+      const data = await mail.getOverview(cfg, { refresh: Boolean(req.query.refresh) });
+      res.json({ configured: true, email: cfg.email, webmailUrl: mail.webmailUrl(cfg), ...data });
+    } catch (err) {
+      res.json({ configured: true, email: cfg.email, webmailUrl: mail.webmailUrl(cfg), error: err.message });
+    }
+  }),
+);
+
+app.patch(
+  '/api/mail/:uid',
+  wrap(async (req, res) => {
+    const db = await load();
+    const cfg = mailConfig(db);
+    if (!cfg) throw new HttpError(400, 'Kein Postfach verbunden.');
+    const uid = Number(req.params.uid);
+    if (!Number.isInteger(uid) || uid <= 0) throw new HttpError(400, 'Ungültige Mail.');
+    const b = req.body || {};
+    try {
+      await mail.updateMessage(cfg, uid, {
+        seen: typeof b.seen === 'boolean' ? b.seen : undefined,
+        flagged: typeof b.flagged === 'boolean' ? b.flagged : undefined,
+      });
+    } catch (err) {
+      throw new HttpError(502, err.message);
+    }
+    res.json({ ok: true });
+  }),
+);
+
+// ---------- Auto-Ausgaben ----------
+const EXPENSE_CATEGORIES = {
+  fuel: 'Tanken',
+  service: 'Inspektion / Wartung',
+  repair: 'Reparatur',
+  tires: 'Reifen',
+  insurance: 'Versicherung',
+  tax: 'Kfz-Steuer',
+  inspection: 'HU / TÜV',
+  parking: 'Parken / Maut',
+  care: 'Pflege / Wäsche',
+  other: 'Sonstiges',
+};
+
+const round2 = (n) => Math.round(n * 100) / 100;
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+function sanitizeExpense(b, existing = {}) {
+  const e = { ...existing };
+  if (b.date !== undefined) e.date = dateOrEmpty(b.date) || todayStr();
+  if (b.category !== undefined) e.category = EXPENSE_CATEGORIES[b.category] ? b.category : 'other';
+  if (b.amount !== undefined) {
+    const amount = Number(String(b.amount).replace(',', '.'));
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) throw new HttpError(400, 'Bitte einen gültigen Betrag eingeben.');
+    e.amount = round2(amount);
+  }
+  if (b.mileageKm !== undefined) e.mileageKm = numOrNull(b.mileageKm) == null ? null : Math.round(numOrNull(b.mileageKm));
+  if (b.liters !== undefined) {
+    const l = numOrNull(String(b.liters ?? '').replace(',', '.'));
+    e.liters = l == null || l <= 0 ? null : round2(l);
+  }
+  if (b.fullTank !== undefined) e.fullTank = Boolean(b.fullTank);
+  if (b.station !== undefined) e.station = str(b.station, 100);
+  if (b.note !== undefined) e.note = str(b.note, 500);
+  if (e.category !== 'fuel') {
+    e.liters = null;
+    e.fullTank = false;
+  }
+  return e;
+}
+
+// Kilometerstand (und nach Volltanken den Tank) im Auto-Status nachziehen.
+function syncCarFromExpense(db, e) {
+  let changed = false;
+  if (e.mileageKm != null && (db.car.mileageKm == null || e.mileageKm > db.car.mileageKm)) {
+    db.car.mileageKm = e.mileageKm;
+    changed = true;
+  }
+  if (e.category === 'fuel' && e.fullTank && e.date === todayStr()) {
+    db.car.fuelPercent = 100;
+    changed = true;
+  }
+  if (changed) db.car.updatedAt = new Date().toISOString();
+}
+
+const sortExpenses = (list) => [...list].sort((a, b) => b.date.localeCompare(a.date) || (b.mileageKm ?? 0) - (a.mileageKm ?? 0));
+
+app.get(
+  '/api/expenses',
+  wrap(async (req, res) => {
+    const db = await load();
+    res.json({ expenses: sortExpenses(db.expenses), categories: EXPENSE_CATEGORIES });
+  }),
+);
+
+app.post(
+  '/api/expenses',
+  wrap(async (req, res) => {
+    const e = sanitizeExpense(
+      { date: '', category: 'fuel', mileageKm: null, liters: null, fullTank: false, station: '', note: '', ...req.body },
+      { id: newId(), createdAt: new Date().toISOString() },
+    );
+    if (e.amount == null) throw new HttpError(400, 'Bitte einen Betrag eingeben.');
+    const car = await update((db) => {
+      db.expenses.push(e);
+      syncCarFromExpense(db, e);
+      return db.car;
+    });
+    res.status(201).json({ expense: e, car });
+  }),
+);
+
+app.patch(
+  '/api/expenses/:id',
+  wrap(async (req, res) => {
+    const result = await update((db) => {
+      const i = db.expenses.findIndex((x) => x.id === req.params.id);
+      if (i < 0) throw new HttpError(404, 'Eintrag nicht gefunden.');
+      db.expenses[i] = sanitizeExpense(req.body || {}, db.expenses[i]);
+      syncCarFromExpense(db, db.expenses[i]);
+      return { expense: db.expenses[i], car: db.car };
+    });
+    res.json(result);
+  }),
+);
+
+app.delete(
+  '/api/expenses/:id',
+  wrap(async (req, res) => {
+    await update((db) => {
+      db.expenses = db.expenses.filter((x) => x.id !== req.params.id);
+    });
+    res.status(204).end();
+  }),
+);
+
+// CSV-Export (Excel-kompatibel: Semikolon, Dezimalkomma, BOM)
+app.get(
+  '/api/expenses.csv',
+  wrap(async (req, res) => {
+    const db = await load();
+    const cell = (v) => {
+      const t = v == null ? '' : String(v);
+      return /[";\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const num = (n) => (n == null ? '' : String(n).replace('.', ','));
+    const rows = [['Datum', 'Kategorie', 'Betrag (EUR)', 'Kilometerstand', 'Liter', 'Preis je Liter', 'Vollgetankt', 'Tankstelle', 'Notiz']];
+    for (const e of sortExpenses(db.expenses).reverse()) {
+      rows.push([
+        e.date,
+        EXPENSE_CATEGORIES[e.category],
+        num(e.amount),
+        e.mileageKm ?? '',
+        num(e.liters),
+        e.liters ? num((e.amount / e.liters).toFixed(3)) : '',
+        e.category === 'fuel' ? (e.fullTank ? 'ja' : 'nein') : '',
+        e.station,
+        e.note,
+      ]);
+    }
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Disposition', 'attachment; filename="auto-kosten.csv"');
+    res.send('\uFEFF' + rows.map((r) => r.map(cell).join(';')).join('\r\n'));
   }),
 );
 
